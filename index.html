@@ -156,7 +156,7 @@
         ? `<button class="match-chip hot-chip" onclick="showBuyerMatches('${l.id}')">🔥 ${hotBuyers.length} hot buyer${hotBuyers.length>1?"s":""}</button>`
         : (() => {
             const all = buyers.filter(b => buyerMatchesListing(b,l));
-            return all.length ? `<button class="match-chip" onclick="showBuyerMatches('${l.id}')">👥 ${all.length} buyer match${all.length>1?"es":""}</button>` : "";
+            return all.length ? `<button class="match-chip" onclick="showBuyerMatches('${l.id}')">🙋🏻‍♂️ ${all.length} buyer match${all.length>1?"es":""}</button>` : "";
           })();
       const div = document.createElement("div");
       div.className = "card listing-card" + (compact?" card-compact":"");
@@ -313,9 +313,9 @@
           </div>
         </div>
         <div class="card-address">${b.name}</div>
-        ${!compact&&b.boxdice?`<div class="buyer-contact"><a href="${b.boxdice}" target="_blank" rel="noopener" class="bd-link">📋 Box &amp; Dice profile ↗</a></div>`:""}
         <div class="buyer-row"><span class="buyer-label">Budget</span><span>${b.budgetMin||"?"} – ${b.budgetMax||"?"}</span></div>
         <div class="buyer-row"><span class="buyer-label">Suburbs</span><span>${b.suburbs||"Flexible"}</span></div>
+        ${!compact&&b.boxdice?`<div class="buyer-contact"><a href="${b.boxdice}" target="_blank" rel="noopener" class="bd-link">📋 Box &amp; Dice profile ↗</a></div>`:""}
         ${!compact&&b.notes?`<div class="card-notes">${b.notes}</div>`:""}
         ${missBadge}
         ${historyHtml}
@@ -780,19 +780,15 @@
     }
     .btn-logout:hover { background:rgba(242,237,228,.18); }
 
-    /* ── Tab bar ───────────────────────────────────────────────────────────── */
-    .tab-bar {
-      background:var(--surface); border-bottom:1px solid var(--border);
-      display:flex; padding:0 1.5rem;
+    /* ── Nav tabs (in navbar) ──────────────────────────────────────────────── */
+    .nav-tab {
+      background:none; border:none; color:rgba(242,237,228,0.55); cursor:pointer;
+      font-size:.72rem; font-weight:700; font-family:'Inter',sans-serif;
+      text-transform:uppercase; letter-spacing:0.1em; padding:.4rem .75rem;
+      border-radius:5px; transition:color .15s,background .15s; white-space:nowrap;
     }
-    .tab-nav-btn {
-      padding:.8rem 1.25rem; background:none; border:none; font-size:.75rem;
-      font-weight:600; color:var(--muted); cursor:pointer;
-      border-bottom:2px solid transparent; margin-bottom:-1px;
-      transition:color .15s; white-space:nowrap; font-family:'Inter',sans-serif;
-      text-transform:uppercase; letter-spacing:0.1em;
-    }
-    .tab-nav-btn.tab-active { color:var(--brand); border-bottom-color:var(--accent); }
+    .nav-tab:hover { color:var(--bg); background:rgba(242,237,228,0.08); }
+    .nav-tab.tab-active { color:var(--accent); }
 
     /* ── Panes ─────────────────────────────────────────────────────────────── */
     .pane { padding:1.5rem; max-width:1400px; margin:0 auto; width:100%; }
@@ -1164,7 +1160,7 @@
   <div class="hero-overlay">
     <div class="hero-eyebrow">Members Only</div>
     <h1 class="hero-title">Secret <span>Sauce</span></h1>
-    <p class="hero-tagline">Less fumbling. More comms.</p>
+    <p class="hero-tagline">Tinder for underbidders.</p>
     <div class="hero-features">
       <div class="hero-feat">
         <span class="feat-icon">🏠</span>
@@ -1176,12 +1172,12 @@
       <div class="hero-feat">
         <span class="feat-icon">🔥</span>
         <div>
-          <strong>Hot buyers, one look</strong>
-          <p>See who's circling, who just missed out, and who's ready to write a cheque — today.</p>
+          <strong>Hot buyers at a glance</strong>
+          <p>See who's circling, who just missed out, and who's got the cash.</p>
         </div>
       </div>
       <div class="hero-feat">
-        <span class="feat-icon">🎯</span>
+        <span class="feat-icon">🍆</span>
         <div>
           <strong>Share the love with the team</strong>
           <p>All the underbidders in one place — buyer budgets, suburb wish lists, matched to listings across the whole team.</p>
@@ -1221,16 +1217,13 @@
   <nav class="navbar">
     <div class="navbar-brand">Secret <span>Sauce</span></div>
     <div class="navbar-right">
+      <button id="tab-dashboard" class="nav-tab tab-active" onclick="switchTab('dashboard')">📊 Dashboard</button>
+      <button id="tab-listings"  class="nav-tab"            onclick="switchTab('listings')">🏠 Listings</button>
+      <button id="tab-buyers"    class="nav-tab"            onclick="switchTab('buyers')">🙋🏻‍♂️ Buyers</button>
       <span class="navbar-user" id="user-name"></span>
       <button class="btn-logout" onclick="handleLogout()">Log out</button>
     </div>
   </nav>
-
-  <div class="tab-bar">
-    <button id="tab-dashboard" class="tab-nav-btn tab-active" onclick="switchTab('dashboard')">📊 Dashboard</button>
-    <button id="tab-listings"  class="tab-nav-btn"            onclick="switchTab('listings')">🏠 Listings</button>
-    <button id="tab-buyers"    class="tab-nav-btn"            onclick="switchTab('buyers')">👥 Buyers</button>
-  </div>
 
   <!-- ── DASHBOARD PANE ─────────────────────────────────────────────────── -->
   <div id="pane-dashboard" class="pane">
@@ -1241,7 +1234,7 @@
       </div>
       <div class="stat-card stat-avail">
         <div class="stat-num" id="stat-available">—</div>
-        <div class="stat-label">✅ Available Listings</div>
+        <div class="stat-label">💸 Available Listings</div>
       </div>
       <div class="stat-card stat-matches">
         <div class="stat-num" id="stat-matches">—</div>
@@ -1253,9 +1246,9 @@
     <div id="dash-listings" class="grid" style="margin-bottom:2rem"></div>
     <div id="empty-avail" class="empty-state hidden"><div class="icon">🏡</div><p>No listings yet — add one in the Listings tab.</p></div>
 
-    <div class="dash-section-title">👥 All Buyers</div>
+    <div class="dash-section-title">🙋🏻‍♂️ All Buyers</div>
     <div id="dash-hot-buyers" class="grid" style="margin-bottom:2rem"></div>
-    <div id="empty-hot" class="empty-state hidden"><div class="icon">👥</div><p>No buyers yet — add one in the Buyers tab.</p></div>
+    <div id="empty-hot" class="empty-state hidden"><div class="icon">🙋🏻‍♂️</div><p>No buyers yet — add one in the Buyers tab.</p></div>
 
     <div class="dash-section-title">🔴 Underbidders</div>
     <div id="dash-underbidders" class="grid" style="margin-bottom:2rem"></div>
@@ -1292,7 +1285,7 @@
     <div class="count-row" id="buyers-count"></div>
     <div id="buyers-grid" class="grid"></div>
     <div id="empty-buyers" class="empty-state empty-state-grid hidden">
-      <div class="icon">👥</div><p>No buyers yet — add the first one!</p>
+      <div class="icon">🙋🏻‍♂️</div><p>No buyers yet — add the first one!</p>
     </div>
   </div>
 
