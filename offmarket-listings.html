@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Secret Sauce — Jellis Craig</title>
-  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
@@ -138,7 +138,7 @@
             return all.length ? `<button class="match-chip" onclick="showBuyerMatches('${l.id}')">👥 ${all.length} buyer match${all.length>1?"es":""}</button>` : "";
           })();
       const div = document.createElement("div");
-      div.className = "card" + (compact?" card-compact":"");
+      div.className = "card listing-card" + (compact?" card-compact":"");
       div.innerHTML = `
         <div class="card-header">
           <span class="card-type">${icon} ${l.propertyType||"Property"}</span>
@@ -494,10 +494,16 @@
       --muted:       #6B8070;
       --success:     #2FB98A;
       --danger:      #D45050;
-      --radius:      10px;
+      --radius:      4px;
       --shadow:      0 2px 12px rgba(15,26,16,0.07);
+      --listing-color: #1A5C3A;
+      --listing-bg:    rgba(26,92,58,0.04);
+      --listing-bdr:   rgba(26,92,58,0.28);
+      --buyer-color:   #2563A8;
+      --buyer-bg:      rgba(37,99,168,0.04);
+      --buyer-bdr:     rgba(37,99,168,0.25);
     }
-    body { font-family:'Poppins',sans-serif; background:var(--bg); color:var(--text); min-height:100vh; font-size:14px; line-height:1.75; }
+    body { font-family:'Inter',sans-serif; background:var(--bg); color:var(--text); min-height:100vh; font-size:14px; line-height:1.75; }
     .hidden { display:none !important; }
     a { color:var(--forest); }
 
@@ -537,7 +543,7 @@
     .form-group input,.form-group select,.form-group textarea {
       width:100%; padding:.65rem .85rem; border:1.5px solid var(--border);
       border-radius:7px; font-size:.9rem; color:var(--text); background:var(--bg);
-      outline:none; transition:border-color .15s; font-family:'Poppins',sans-serif;
+      outline:none; transition:border-color .15s; font-family:'Inter',sans-serif;
     }
     .form-group input:focus,.form-group select:focus,.form-group textarea:focus {
       border-color:var(--accent);
@@ -545,7 +551,7 @@
     .btn-primary {
       width:100%; padding:.75rem; background:var(--brand); color:var(--bg);
       border:none; border-radius:7px; font-size:.85rem; font-weight:700;
-      cursor:pointer; transition:background .15s; font-family:'Poppins',sans-serif;
+      cursor:pointer; transition:background .15s; font-family:'Inter',sans-serif;
       letter-spacing:0.08em; text-transform:uppercase;
     }
     .btn-primary:hover:not(:disabled) { background:var(--forest); }
@@ -577,7 +583,7 @@
     .btn-logout {
       background:rgba(242,237,228,.1); color:var(--bg);
       border:1px solid rgba(242,237,228,.2); padding:.35rem .8rem;
-      border-radius:5px; font-size:.72rem; cursor:pointer; font-family:'Poppins',sans-serif;
+      border-radius:5px; font-size:.72rem; cursor:pointer; font-family:'Inter',sans-serif;
       font-weight:600; letter-spacing:0.05em; text-transform:uppercase;
     }
     .btn-logout:hover { background:rgba(242,237,228,.18); }
@@ -591,7 +597,7 @@
       padding:.8rem 1.25rem; background:none; border:none; font-size:.75rem;
       font-weight:600; color:var(--muted); cursor:pointer;
       border-bottom:2px solid transparent; margin-bottom:-1px;
-      transition:color .15s; white-space:nowrap; font-family:'Poppins',sans-serif;
+      transition:color .15s; white-space:nowrap; font-family:'Inter',sans-serif;
       text-transform:uppercase; letter-spacing:0.1em;
     }
     .tab-nav-btn.tab-active { color:var(--brand); border-bottom-color:var(--accent); }
@@ -642,13 +648,13 @@
     .toolbar-search {
       flex:1; min-width:200px; padding:.6rem .9rem; border:1.5px solid var(--border);
       border-radius:7px; font-size:.85rem; background:var(--surface); outline:none;
-      transition:border-color .15s; font-family:'Poppins',sans-serif; color:var(--text);
+      transition:border-color .15s; font-family:'Inter',sans-serif; color:var(--text);
     }
     .toolbar-search:focus { border-color:var(--accent); }
     .toolbar-sort {
       padding:.6rem .9rem; border:1.5px solid var(--border); border-radius:7px;
       font-size:.85rem; background:var(--surface); cursor:pointer; color:var(--text);
-      font-family:'Poppins',sans-serif;
+      font-family:'Inter',sans-serif;
     }
     .count-row {
       font-size:9px; color:var(--muted); margin-bottom:.85rem;
@@ -657,7 +663,7 @@
     .btn-add {
       background:var(--accent); color:var(--brand); border:none; padding:.6rem 1.15rem;
       border-radius:7px; font-size:.75rem; font-weight:700; cursor:pointer;
-      white-space:nowrap; transition:background .15s; font-family:'Poppins',sans-serif;
+      white-space:nowrap; transition:background .15s; font-family:'Inter',sans-serif;
       text-transform:uppercase; letter-spacing:0.08em;
     }
     .btn-add:hover { background:#c49640; }
@@ -679,12 +685,24 @@
       transition:box-shadow .2s,transform .2s; position:relative; overflow:hidden;
     }
     .card::before {
-      content:''; position:absolute; top:0; left:0; right:0; height:2px;
-      background:var(--accent-bdr);
+      content:''; position:absolute; top:0; left:0; right:0; height:3px;
+      background:var(--border);
     }
     .card:hover { box-shadow:0 6px 24px rgba(15,26,16,0.12); transform:translateY(-2px); }
-    .card:hover::before { background:var(--accent); }
     .card-compact { padding:.9rem 1rem; }
+
+    /* Listing cards — green */
+    .listing-card { background:#F5FBF7; border-color:var(--listing-bdr); }
+    .listing-card::before { background:var(--listing-bdr); }
+    .listing-card:hover::before { background:var(--listing-color); }
+    .listing-card .card-price { color:var(--listing-color); }
+
+    /* Buyer cards — blue */
+    .buyer-card { background:#F4F8FD; border-color:var(--buyer-bdr); }
+    .buyer-card::before { background:var(--buyer-bdr); }
+    .buyer-card:hover::before { background:var(--buyer-color); }
+
+    /* Hot buyer override */
     .buyer-hot { border-color:var(--hot-border); background:var(--hot-bg); }
     .buyer-hot::before { background:var(--accent) !important; }
     .card-header { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:.3rem; }
@@ -734,7 +752,7 @@
     .btn-hot {
       background:none; border:1.5px solid var(--border); color:var(--muted);
       padding:.28rem .65rem; border-radius:5px; font-size:.72rem; cursor:pointer;
-      font-weight:600; transition:all .15s; white-space:nowrap; font-family:'Poppins',sans-serif;
+      font-weight:600; transition:all .15s; white-space:nowrap; font-family:'Inter',sans-serif;
     }
     .btn-hot:hover,.btn-hot-on {
       background:var(--hot-bg); border-color:var(--hot-border); color:#7a5a00;
@@ -742,13 +760,13 @@
     .btn-underbidder {
       background:none; border:1.5px solid rgba(212,80,80,0.35); color:var(--danger);
       padding:.28rem .65rem; border-radius:5px; font-size:.72rem; cursor:pointer;
-      font-weight:600; transition:all .15s; white-space:nowrap; font-family:'Poppins',sans-serif;
+      font-weight:600; transition:all .15s; white-space:nowrap; font-family:'Inter',sans-serif;
     }
     .btn-underbidder:hover { background:rgba(212,80,80,0.07); }
     .btn-delete {
       background:none; border:1px solid rgba(212,80,80,0.35); color:var(--danger);
       padding:.25rem .6rem; border-radius:5px; font-size:.7rem; cursor:pointer; transition:all .15s;
-      font-family:'Poppins',sans-serif;
+      font-family:'Inter',sans-serif;
     }
     .btn-delete:hover { background:var(--danger); color:#fff; border-color:var(--danger); }
 
@@ -809,7 +827,7 @@
     .btn-cancel {
       flex:1; padding:.7rem; background:var(--bg); color:var(--text);
       border:1.5px solid var(--border); border-radius:7px; font-size:.85rem;
-      cursor:pointer; font-family:'Poppins',sans-serif; font-weight:600;
+      cursor:pointer; font-family:'Inter',sans-serif; font-weight:600;
       text-transform:uppercase; letter-spacing:0.05em;
     }
     .btn-cancel:hover { background:var(--bg-dark); }
@@ -916,29 +934,29 @@
 <!-- ══════════════════════════════════ HERO ══════════════════════════════════ -->
 <div id="hero-screen">
   <div class="hero-overlay">
-    <div class="hero-eyebrow">Jellis Craig &middot; Circle Members Only</div>
+    <div class="hero-eyebrow">Members Only</div>
     <h1 class="hero-title">Secret <span>Sauce</span></h1>
-    <p class="hero-tagline">The listings your competitors don't know exist. Yet.</p>
+    <p class="hero-tagline">Less fumbling. More comms.</p>
     <div class="hero-features">
       <div class="hero-feat">
         <span class="feat-icon">🏠</span>
         <div>
-          <strong>Post it. Someone already has the buyer.</strong>
+          <strong>Get your off-markets in front of the whole team</strong>
           <p>Drop your off-market into the pool and let the team run. Who needs REA?</p>
         </div>
       </div>
       <div class="hero-feat">
         <span class="feat-icon">🔥</span>
         <div>
-          <strong>Your hot buyers, finally organised</strong>
+          <strong>Hot buyers, one look</strong>
           <p>See who's circling, who just missed out, and who's ready to write a cheque — today.</p>
         </div>
       </div>
       <div class="hero-feat">
         <span class="feat-icon">🎯</span>
         <div>
-          <strong>No more 'I had the perfect buyer for that.'</strong>
-          <p>Buyer budgets, suburb wish lists, matched to listings across the whole team.</p>
+          <strong>Share the love with the team</strong>
+          <p>All the underbidders in one place — buyer budgets, suburb wish lists, matched to listings across the whole team.</p>
         </div>
       </div>
     </div>
@@ -949,7 +967,7 @@
 <div id="auth-screen">
   <div class="auth-box">
     <div class="auth-logo">
-      <div class="auth-eyebrow">Jellis Craig · Circle Members Only</div>
+      <div class="auth-eyebrow">Members Only</div>
       <h1>Secret <span>Sauce</span></h1>
       <p>Off-market listings &amp; buyer intelligence</p>
     </div>
