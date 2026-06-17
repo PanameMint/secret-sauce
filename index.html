@@ -418,8 +418,11 @@
       el("b-name").value       = b.name       || "";
       el("b-budget-min").value = b.budgetMin  || "";
       el("b-budget-max").value = b.budgetMax  || "";
-      el("b-type").value       = b.propertyType || "Any";
-      el("b-boxdice").value    = b.boxdice    || "";
+      el("b-type").value        = b.propertyType || "Any";
+      el("b-phone").value       = b.phone       || "";
+      el("b-email").value       = b.email       || "";
+      el("b-preapproved").value = b.preApproved || "No";
+      el("b-boxdice").value     = b.boxdice     || "";
       el("b-notes").value      = b.notes      || "";
       suburbChips = b.suburbs ? b.suburbs.split(", ").filter(Boolean) : [];
       setTimeout(renderSuburbChips, 0);
@@ -433,6 +436,8 @@
       const name=val("b-name"),
             budgetMin=val("b-budget-min"), budgetMax=val("b-budget-max"),
             suburbs=val("b-suburbs"), propType=val("b-type"),
+            phone=val("b-phone"), email=val("b-email"),
+            preApproved=val("b-preapproved"),
             boxdice=val("b-boxdice"), notes=val("b-notes");
       if (!name) { setErr("buyer-err","Buyer name is required."); return; }
       const btn=el("b-submit"); btn.disabled=true;
@@ -441,22 +446,22 @@
       try {
         if (editingBuyerId) {
           await updateDoc(doc(db,"buyers",editingBuyerId),{
-            name,budgetMin,budgetMax,suburbs,propertyType:propType,boxdice,notes,
+            name,budgetMin,budgetMax,suburbs,propertyType:propType,phone,email,preApproved,boxdice,notes,
           });
           const idx = buyers.findIndex(b=>b.id===editingBuyerId);
-          if (idx>-1) Object.assign(buyers[idx],{name,budgetMin,budgetMax,suburbs,propertyType:propType,boxdice,notes});
+          if (idx>-1) Object.assign(buyers[idx],{name,budgetMin,budgetMax,suburbs,propertyType:propType,phone,email,preApproved,boxdice,notes});
           toastMsg="Buyer updated!";
         } else {
           const ref = await addDoc(collection(db,"buyers"),{
             name,budgetMin,budgetMax,suburbs,
-            propertyType:propType,boxdice,notes,
+            propertyType:propType,phone,email,preApproved,boxdice,notes,
             isHot:false, underBidderHistory:[],
             addedByUid:currentUser.uid,
             addedByName:currentUser.displayName||currentUser.email,
             createdAt:serverTimestamp(),
           });
           buyers.unshift({id:ref.id,name,budgetMin,budgetMax,suburbs,
-            propertyType:propType,boxdice,notes,isHot:false,underBidderHistory:[],
+            propertyType:propType,phone,email,preApproved,boxdice,notes,isHot:false,underBidderHistory:[],
             addedByUid:currentUser.uid,addedByName:currentUser.displayName||currentUser.email});
           toastMsg="Buyer added!";
         }
@@ -471,17 +476,9 @@
     // ══════════════════════════════════════════════════════════════════════
     function countMatches() {
       let count = 0;
-      for (const b of buyers) {
-        for (const l of listings) {
-          if (l.status === "Withdrawn") continue;
-          const suburbMatch = !b.suburbs || !l.suburb ||
-            b.suburbs.toLowerCase().split(/[,;\s]+/).some(s => s && l.suburb.toLowerCase().includes(s));
-          const listPrice  = parsePrice(l.priceMin || l.priceMax);
-          const maxBudget  = parsePrice(b.budgetMax);
-          const priceMatch = !listPrice || !maxBudget || listPrice <= maxBudget * 1.1;
-          if (suburbMatch && priceMatch) count++;
-        }
-      }
+      for (const b of buyers)
+        for (const l of listings)
+          if (buyerMatchesListing(b, l)) count++;
       return count;
     }
 
@@ -523,7 +520,7 @@
       const maxBudget   = parsePrice(b.budgetMax);
       const listPrice   = parsePrice(l.priceMin || l.priceMax);
       const budgetMatch = !listPrice||!maxBudget||listPrice<=maxBudget*1.1;
-      const statusMatch = !l.status||l.status==="Available";
+      const statusMatch = l.status !== "Withdrawn";
       return suburbMatch&&typeMatch&&budgetMatch&&statusMatch;
     }
 
@@ -552,7 +549,7 @@
       el("match-modal-body").innerHTML = matched.length
         ? matched.map(l=>`<div class="match-row">
             <div class="match-name">${l.address}, ${l.suburb||""}</div>
-            <div class="match-detail">${l.propertyType||""} · ${l.price||"Price on request"}</div>
+            <div class="match-detail">${l.propertyType||""} · ${l.priceMin&&l.priceMax?`${l.priceMin} – ${l.priceMax}`:l.priceMin||l.priceMax||"Price on request"}</div>
             <div class="match-agent">Added by ${l.addedByName||"Unknown"}</div>
           </div>`).join("")
         : "<p style='color:var(--muted);padding:1rem 0'>No matching listings found.</p>";
@@ -615,7 +612,7 @@
         if (e.key === "Enter" || e.key === "," || e.key === "Tab") {
           e.preventDefault();
           const v = input.value.trim().replace(/,$/, "");
-          if (v && !suburbChips.includes(v)) {
+          if (v && !suburbChips.some(s => s.toLowerCase() === v.toLowerCase())) {
             suburbChips.push(v);
             renderSuburbChips();
           }
@@ -665,7 +662,6 @@
             if (sf) sf.value = [suburb, state, postcode].filter(Boolean).join(" ");
           } catch(e) { console.warn("Place parse error:", e); }
         });
-        window._acInit = ac;
       } catch(e) { console.warn("Maps autocomplete init failed:", e); }
     };
   </script>
@@ -809,9 +805,9 @@
       position:relative; overflow:hidden;
     }
     .stat-card::before { content:''; position:absolute; top:0; left:0; right:0; height:2px; }
-    .stat-hot::before,.stat-total-b::before { background:var(--accent); }
+    .stat-hot::before { background:var(--accent); }
     .stat-avail::before { background:var(--success); }
-    .stat-total-l::before { background:var(--forest); }
+    .stat-matches::before { background:var(--forest); }
     .stat-num {
       font-size:2.2rem; font-weight:900; color:var(--brand); line-height:1;
       font-family:'JetBrains Mono',monospace;
@@ -1017,8 +1013,6 @@
       font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:0.1em;
     }
     .badge-available  { background:rgba(47,185,138,0.12); color:#1a7a5a; border:1px solid rgba(47,185,138,0.25); }
-    .badge-offer      { background:var(--accent-dim); color:#7a5a00; border:1px solid var(--accent-bdr); }
-    .badge-sold       { background:rgba(212,80,80,0.08); color:#9a2020; border:1px solid rgba(212,80,80,0.2); }
     .badge-hot        { background:var(--accent-dim); color:#7a5a00; border:1px solid var(--accent-bdr); }
     .badge-offmarket  { background:rgba(26,92,58,0.1); color:#1A5C3A; border:1px solid rgba(26,92,58,0.25); }
     .badge-premarket  { background:rgba(212,168,83,0.12); color:#7a5a00; border:1px solid var(--accent-bdr); }
@@ -1249,7 +1243,7 @@
         <div class="stat-num" id="stat-available">—</div>
         <div class="stat-label">✅ Available Listings</div>
       </div>
-      <div class="stat-card stat-total-l">
+      <div class="stat-card stat-matches">
         <div class="stat-num" id="stat-matches">—</div>
         <div class="stat-label">🎯 Total Matches</div>
       </div>
@@ -1357,7 +1351,14 @@
         </div>
         <input type="hidden" id="b-suburbs" />
       </div>
-      <div class="form-group"><label>Property type</label><select id="b-type"><option>Any</option><option>House</option><option>Apartment</option><option>Townhouse</option><option>Land</option></select></div>
+      <div class="form-row-2">
+        <div class="form-group"><label>Phone</label><input id="b-phone" type="tel" placeholder="0400 000 000" /></div>
+        <div class="form-group"><label>Email</label><input id="b-email" type="email" placeholder="buyer@email.com" /></div>
+      </div>
+      <div class="form-row-2">
+        <div class="form-group"><label>Property type</label><select id="b-type"><option>Any</option><option>House</option><option>Apartment</option><option>Townhouse</option><option>Land</option></select></div>
+        <div class="form-group"><label>Pre-approved?</label><select id="b-preapproved"><option value="No">No</option><option value="Yes">Yes</option></select></div>
+      </div>
       <div class="form-group"><label>Box &amp; Dice profile link</label><input id="b-boxdice" type="url" placeholder="https://app.boxanddice.com.au/contacts/…" /></div>
       <div class="form-group"><label>Notes</label><textarea id="b-notes" rows="3" placeholder="Must-haves, lifestyle, motivation, timeline…"></textarea></div>
       <p id="buyer-err" class="form-err"></p>
