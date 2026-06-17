@@ -166,7 +166,7 @@
       } catch { toast("Error deleting listing.",true); }
     };
 
-    window.openAddListing  = () => { el("add-listing-form").reset(); clearErr("listing-err"); showModal("modal-add-listing"); initAddressAutocomplete(); };
+    window.openAddListing  = () => { el("add-listing-form").reset(); clearErr("listing-err"); showModal("modal-add-listing"); };
     window.closeAddListing = () => hideModal("modal-add-listing");
 
     window.submitListing = async (e) => {
@@ -510,61 +510,6 @@
       });
     });
 
-    // ── Google Maps address autocomplete (Places API New — programmatic) ───
-    let _acInitialized = false;
-    async function initAddressAutocomplete() {
-      if (_acInitialized) return;
-      // wait for google maps to load
-      for (let i = 0; i < 20; i++) {
-        if (window.google?.maps) break;
-        await new Promise(r => setTimeout(r, 200));
-      }
-      if (!window.google?.maps) return;
-      try {
-        const { AutocompleteSessionToken, AutocompleteSuggestion } =
-          await google.maps.importLibrary("places");
-        const input    = el("l-address");
-        const dropdown = el("ac-dropdown");
-        let sessionToken = new AutocompleteSessionToken();
-        _acInitialized = true;
-
-        input.addEventListener("input", async () => {
-          const q = input.value.trim();
-          if (q.length < 3) { dropdown.innerHTML = ""; return; }
-          try {
-            const { suggestions } = await AutocompleteSuggestion.fetchAutocompleteSuggestions({
-              input: q, sessionToken,
-              includedRegionCodes: ["au"],
-              types: ["address"],
-            });
-            dropdown.innerHTML = "";
-            suggestions.slice(0,5).forEach(s => {
-              const item = document.createElement("div");
-              item.className = "ac-item";
-              item.textContent = s.placePrediction.text.text;
-              item.addEventListener("mousedown", async (e) => {
-                e.preventDefault();
-                const place = s.placePrediction.toPlace();
-                await place.fetchFields({ fields: ["addressComponents","formattedAddress"] });
-                const comps    = place.addressComponents || [];
-                const locality = comps.find(c => c.types.includes("locality"));
-                if (locality) el("l-suburb").value = locality.longText;
-                const num   = comps.find(c => c.types.includes("street_number"))?.longText || "";
-                const route = comps.find(c => c.types.includes("route"))?.longText || "";
-                input.value = [num, route].filter(Boolean).join(" ") || place.formattedAddress || "";
-                dropdown.innerHTML = "";
-                sessionToken = new AutocompleteSessionToken();
-              });
-              dropdown.appendChild(item);
-            });
-          } catch(e) { console.error("Autocomplete fetch error:", e); }
-        });
-
-        input.addEventListener("blur", () => {
-          setTimeout(() => { dropdown.innerHTML = ""; }, 200);
-        });
-      } catch(e) { console.error("Address autocomplete init error:", e); }
-    }
 
     function toast(msg, isError=false) {
       const t=el("toast");
@@ -575,10 +520,32 @@
   </script>
 
   <!-- ── Google Maps Places API ──────────────────────────────────────────── -->
-  <!-- 🔑 Replace AIzaSyDbddkDT76iAf2ShHrWbNdhmmwf-4OMeb8 below with your actual key        -->
-  <!--    Google Cloud Console → APIs & Services → Credentials               -->
-  <!--    Enable: Maps JavaScript API + Places API                           -->
-  <script async src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDbddkDT76iAf2ShHrWbNdhmmwf-4OMeb8&loading=async&libraries=places"></script>
+  <script>
+    function initAddressAutocomplete() {
+      const addressField = document.getElementById("l-address");
+      if (!addressField) return;
+      const ac = new google.maps.places.Autocomplete(addressField, {
+        componentRestrictions: { country: ["au"] },
+        fields: ["address_components"],
+        types: ["address"],
+      });
+      ac.addListener("place_changed", function() {
+        const place = ac.getPlace();
+        if (!place.address_components) return;
+        let streetNum = "", route = "", suburb = "";
+        for (const c of place.address_components) {
+          const t = c.types[0];
+          if (t === "street_number") streetNum = c.long_name;
+          if (t === "route")         route     = c.short_name;
+          if (t === "locality")      suburb    = c.long_name;
+        }
+        addressField.value = [streetNum, route].filter(Boolean).join(" ");
+        const suburbField = document.getElementById("l-suburb");
+        if (suburbField && suburb) suburbField.value = suburb;
+      });
+    }
+  </script>
+  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDbddkDT76iAf2ShHrWbNdhmmwf-4OMeb8&callback=initAddressAutocomplete&libraries=places&v=weekly" defer></script>
 
   <style>
     *, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
