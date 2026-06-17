@@ -166,11 +166,14 @@
       } catch { toast("Error deleting listing.",true); }
     };
 
-    window.openAddListing  = () => { el("add-listing-form").reset(); clearErr("listing-err"); showModal("modal-add-listing"); };
+    window.openAddListing  = () => { el("add-listing-form").reset(); clearErr("listing-err"); showModal("modal-add-listing"); initAddressAutocomplete(); };
     window.closeAddListing = () => hideModal("modal-add-listing");
 
     window.submitListing = async (e) => {
       e.preventDefault(); clearErr("listing-err");
+      // fallback: read typed text from PlaceAutocompleteElement if no place was selected
+      const acInput = el("l-address-wrap")?.querySelector("input");
+      if (acInput?.value && !el("l-address").value) el("l-address").value = acInput.value;
       const address=val("l-address"), suburb=val("l-suburb"), price=val("l-price"),
             propType=val("l-type"), status=val("l-status"), notes=val("l-notes"),
             beds=val("l-beds"), baths=val("l-baths"), cars=val("l-cars");
@@ -510,28 +513,31 @@
       });
     });
 
-    // ── Google Maps address autocomplete ──────────────────────────────────
-    window.initGoogleMaps = () => {
-      const addressInput = el("l-address");
-      if (!addressInput || !window.google) return;
-      const ac = new google.maps.places.Autocomplete(addressInput, {
-        componentRestrictions: { country: "au" },
-        fields: ["address_components","formatted_address"],
-        types: ["address"],
-      });
-      ac.addListener("place_changed", () => {
-        const place = ac.getPlace();
-        if (!place.address_components) return;
-        // extract suburb (locality)
-        const locality = place.address_components.find(c => c.types.includes("locality"));
-        if (locality) el("l-suburb").value = locality.long_name;
-        // set address without country suffix
-        const street = place.address_components
-          .filter(c => c.types.includes("street_number") || c.types.includes("route"))
-          .map(c => c.long_name).join(" ");
-        if (street) addressInput.value = street;
-      });
-    };
+    // ── Google Maps address autocomplete (Places API New) ─────────────────
+    let _acInitialized = false;
+    async function initAddressAutocomplete() {
+      if (_acInitialized || !window.google) return;
+      try {
+        const { PlaceAutocompleteElement } = await google.maps.importLibrary("places");
+        const wrap = el("l-address-wrap");
+        if (!wrap) return;
+        const placeAC = new PlaceAutocompleteElement({
+          componentRestrictions: { country: "au" },
+          types: ["address"],
+        });
+        wrap.appendChild(placeAC);
+        _acInitialized = true;
+        placeAC.addEventListener("gmp-placeselect", async ({ place }) => {
+          await place.fetchFields({ fields: ["addressComponents","formattedAddress"] });
+          const comps = place.addressComponents || [];
+          const locality = comps.find(c => c.types.includes("locality"));
+          if (locality) el("l-suburb").value = locality.longText;
+          const num   = comps.find(c => c.types.includes("street_number"))?.longText || "";
+          const route = comps.find(c => c.types.includes("route"))?.longText || "";
+          el("l-address").value = [num, route].filter(Boolean).join(" ") || place.formattedAddress || "";
+        });
+      } catch(e) { console.error("Address autocomplete init error:", e); }
+    }
 
     function toast(msg, isError=false) {
       const t=el("toast");
@@ -545,7 +551,7 @@
   <!-- 🔑 Replace AIzaSyDbddkDT76iAf2ShHrWbNdhmmwf-4OMeb8 below with your actual key        -->
   <!--    Google Cloud Console → APIs & Services → Credentials               -->
   <!--    Enable: Maps JavaScript API + Places API                           -->
-  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDbddkDT76iAf2ShHrWbNdhmmwf-4OMeb8&libraries=places&callback=initGoogleMaps" async defer></script>
+  <script async src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDbddkDT76iAf2ShHrWbNdhmmwf-4OMeb8&loading=async&libraries=places"></script>
 
   <style>
     *, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
@@ -794,6 +800,15 @@
       border-radius:5px; padding:.45rem .7rem; line-height:1.55; border:1px solid var(--border);
     }
     .form-row-3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:.75rem; }
+    .place-ac-wrap { width:100%; }
+    .place-ac-wrap gmp-place-autocomplete { width:100%; display:block; }
+    .place-ac-wrap gmp-place-autocomplete::part(input) {
+      width:100%; padding:.65rem .85rem; border:1.5px solid var(--border);
+      border-radius:4px; font-size:.9rem; color:var(--text); background:var(--bg);
+      outline:none; font-family:'Inter',sans-serif; transition:border-color .15s;
+      box-sizing:border-box;
+    }
+    .place-ac-wrap gmp-place-autocomplete::part(input):focus { border-color:var(--accent); }
     .card-footer {
       display:flex; justify-content:space-between; align-items:center; margin-top:auto;
       padding-top:.7rem; border-top:1px solid var(--border); flex-wrap:wrap; gap:.4rem;
@@ -1199,7 +1214,7 @@
       <button class="btn-close" onclick="closeAddListing()">✕</button>
     </div>
     <form id="add-listing-form" onsubmit="submitListing(event)">
-      <div class="form-group"><label>Street address *</label><input id="l-address" type="text" placeholder="123 Collins Street" required autocomplete="off" /></div>
+      <div class="form-group"><label>Street address *</label><div id="l-address-wrap" class="place-ac-wrap"></div><input type="hidden" id="l-address" /></div>
       <div class="form-row-2">
         <div class="form-group"><label>Suburb *</label><input id="l-suburb" type="text" placeholder="Melbourne" required /></div>
         <div class="form-group"><label>Price / guide</label><input id="l-price" type="text" placeholder="$1,200,000" /></div>
