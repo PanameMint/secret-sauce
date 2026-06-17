@@ -45,7 +45,7 @@
     let editingBuyerId   = null;
 
     // ── Auth ───────────────────────────────────────────────────────────────
-    onAuthStateChanged(auth, (user) => {
+    onAuthStateChanged(auth, async (user) => {
       currentUser = user;
       if (user) {
         const isFirstLogin = user.metadata.creationTime === user.metadata.lastSignInTime;
