@@ -139,7 +139,7 @@
       }
     };
 
-    window.handleLogout = () => signOut(auth);
+    window.handleLogout = () => { sessionStorage.removeItem("session_welcomed"); signOut(auth); };
 
     function setSetPwErr(m) { el("set-pw-error").textContent = m; }
 
