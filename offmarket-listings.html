@@ -116,10 +116,10 @@
       const f = el("listing-filter").value.toLowerCase();
       const s = el("listing-sort").value;
       let rows = listings.filter(l =>
-        [l.address,l.suburb,l.price,l.propertyType].join(" ").toLowerCase().includes(f)
+        [l.address,l.suburb,l.priceMin,l.priceMax,l.propertyType].join(" ").toLowerCase().includes(f)
       );
-      if (s==="price-asc")  rows.sort((a,b)=>parsePrice(a.price)-parsePrice(b.price));
-      if (s==="price-desc") rows.sort((a,b)=>parsePrice(b.price)-parsePrice(a.price));
+      if (s==="price-asc")  rows.sort((a,b)=>parsePrice(a.priceMin)-parsePrice(b.priceMin));
+      if (s==="price-desc") rows.sort((a,b)=>parsePrice(b.priceMin)-parsePrice(a.priceMin));
       if (s==="suburb")     rows.sort((a,b)=>(a.suburb||"").localeCompare(b.suburb||""));
       el("listings-grid").innerHTML = "";
       el("listings-count").textContent = `${rows.length} listing${rows.length!==1?"s":""}`;
@@ -148,7 +148,7 @@
         </div>
         <div class="card-address">${l.address}</div>
         <div class="card-suburb">${l.suburb||""}</div>
-        <div class="card-price">${l.price||"Price on request"}</div>
+        <div class="card-price">${l.priceMin&&l.priceMax ? `${l.priceMin} – ${l.priceMax}` : l.priceMin||l.priceMax||"Price on request"}</div>
         ${(l.beds||l.baths||l.cars)?`<div class="card-specs">${l.beds?`🛏 ${l.beds}`:""}${l.baths?` · 🚿 ${l.baths}`:""}${l.cars?` · 🚗 ${l.cars}`:""}</div>`:""}
         ${(!compact&&l.notes)?`<div class="card-notes">${l.notes}</div>`:""}
         ${matchChip}
@@ -186,9 +186,10 @@
       clearErr("listing-err");
       el("modal-listing-title").textContent = "Edit listing";
       el("l-submit").textContent = "Save Changes";
-      el("l-address").value  = l.address  || "";
-      el("l-suburb").value   = l.suburb   || "";
-      el("l-price").value    = l.price    || "";
+      el("l-address").value    = l.address  || "";
+      el("l-suburb").value     = l.suburb   || "";
+      el("l-price-min").value  = l.priceMin || "";
+      el("l-price-max").value  = l.priceMax || "";
       el("l-type").value     = l.propertyType || "House";
       el("l-status").value   = l.status   || "Off Market";
       el("l-notes").value    = l.notes    || "";
@@ -202,7 +203,8 @@
 
     window.submitListing = async (e) => {
       e.preventDefault(); clearErr("listing-err");
-      const address=val("l-address"), suburb=val("l-suburb"), price=val("l-price"),
+      const address=val("l-address"), suburb=val("l-suburb"),
+            priceMin=val("l-price-min"), priceMax=val("l-price-max"),
             propType=val("l-type"), status=val("l-status"), notes=val("l-notes"),
             beds=val("l-beds"), baths=val("l-baths"), cars=val("l-cars");
       if (!address||!suburb) { setErr("listing-err","Address and suburb are required."); return; }
@@ -211,18 +213,18 @@
       try {
         if (editingListingId) {
           await updateDoc(doc(db,"listings",editingListingId),{
-            address,suburb,price,propertyType:propType,status,notes,beds,baths,cars,
+            address,suburb,priceMin,priceMax,propertyType:propType,status,notes,beds,baths,cars,
           });
           const idx = listings.findIndex(l=>l.id===editingListingId);
-          if (idx>-1) Object.assign(listings[idx],{address,suburb,price,propertyType:propType,status,notes,beds,baths,cars});
+          if (idx>-1) Object.assign(listings[idx],{address,suburb,priceMin,priceMax,propertyType:propType,status,notes,beds,baths,cars});
           hideModal("modal-add-listing"); renderListings(); renderDashboard(); toast("Listing updated!");
         } else {
           const ref = await addDoc(collection(db,"listings"),{
-            address,suburb,price,propertyType:propType,status,notes,beds,baths,cars,
+            address,suburb,priceMin,priceMax,propertyType:propType,status,notes,beds,baths,cars,
             addedByUid:currentUser.uid, addedByName:currentUser.displayName||currentUser.email,
             createdAt:serverTimestamp(),
           });
-          listings.unshift({id:ref.id,address,suburb,price,propertyType:propType,status,notes,beds,baths,cars,
+          listings.unshift({id:ref.id,address,suburb,priceMin,priceMax,propertyType:propType,status,notes,beds,baths,cars,
             addedByUid:currentUser.uid,addedByName:currentUser.displayName||currentUser.email});
           hideModal("modal-add-listing"); renderListings(); renderDashboard(); toast("Listing added!");
         }
@@ -445,36 +447,32 @@
     // DASHBOARD
     // ══════════════════════════════════════════════════════════════════════
     function renderDashboard() {
-      const hotBuyers       = buyers.filter(b => b.isHot);
-      const availListings   = listings.filter(l => l.status==="Available");
-      const totalBuyers     = buyers.length;
-      const totalListings   = listings.length;
+      const hotBuyers     = buyers.filter(b => b.isHot);
+      const activeListing = listings.filter(l => l.status !== "Withdrawn");
 
       // Stats bar
       el("stat-hot").textContent       = hotBuyers.length;
-      el("stat-available").textContent = availListings.length;
-      el("stat-listings").textContent  = totalListings;
-      el("stat-buyers").textContent    = totalBuyers;
+      el("stat-available").textContent = activeListing.length;
+      el("stat-listings").textContent  = listings.length;
+      el("stat-buyers").textContent    = buyers.length;
 
-      // Hot buyers grid
+      // All buyers grid
       const hbGrid = el("dash-hot-buyers");
-      if (hotBuyers.length) {
-        hbGrid.innerHTML = "";
+      hbGrid.innerHTML = "";
+      if (buyers.length) {
         hide("empty-hot");
-        hotBuyers.forEach(b => hbGrid.appendChild(buildBuyerCard(b, true)));
+        buyers.forEach(b => hbGrid.appendChild(buildBuyerCard(b, true)));
       } else {
-        hbGrid.innerHTML = "";
         show("empty-hot");
       }
 
-      // Available listings grid
+      // All listings grid
       const alGrid = el("dash-listings");
-      if (availListings.length) {
-        alGrid.innerHTML = "";
+      alGrid.innerHTML = "";
+      if (listings.length) {
         hide("empty-avail");
-        availListings.forEach(l => alGrid.appendChild(buildListingCard(l, true)));
+        listings.forEach(l => alGrid.appendChild(buildListingCard(l, true)));
       } else {
-        alGrid.innerHTML = "";
         show("empty-avail");
       }
     }
@@ -486,7 +484,7 @@
       const typeMatch   = !b.propertyType||b.propertyType==="Any"||
         b.propertyType?.toLowerCase()===l.propertyType?.toLowerCase();
       const maxBudget   = parsePrice(b.budgetMax);
-      const listPrice   = parsePrice(l.price);
+      const listPrice   = parsePrice(l.priceMin || l.priceMax);
       const budgetMatch = !listPrice||!maxBudget||listPrice<=maxBudget*1.1;
       const statusMatch = !l.status||l.status==="Available";
       return suburbMatch&&typeMatch&&budgetMatch&&statusMatch;
@@ -1218,33 +1216,29 @@
         <div class="stat-num" id="stat-listings">—</div>
         <div class="stat-label">🏠 Total Listings</div>
       </div>
-      <div class="stat-card stat-total-b">
-        <div class="stat-num" id="stat-buyers">—</div>
-        <div class="stat-label">👥 Total Buyers</div>
-      </div>
     </div>
 
     <div class="dash-columns">
       <div>
         <div class="dash-section-title hot-title">
-          🔥 Hot Buyers
+          👥 All Buyers
           <span class="pill" id="stat-hot-pill">0</span>
         </div>
         <div id="dash-hot-buyers" class="dash-grid"></div>
         <div id="empty-hot" class="empty-state hidden">
-          <div class="icon">⭐</div>
-          <p>No hot buyers yet.<br>Mark a buyer as Hot in the Buyers tab.</p>
+          <div class="icon">👥</div>
+          <p>No buyers yet.<br>Add one in the Buyers tab.</p>
         </div>
       </div>
       <div>
         <div class="dash-section-title">
-          ✅ Available Listings
+          🏠 All Listings
           <span class="pill" id="stat-avail-pill">0</span>
         </div>
         <div id="dash-listings" class="dash-grid"></div>
         <div id="empty-avail" class="empty-state hidden">
           <div class="icon">🏡</div>
-          <p>No available listings.<br>Add one in the Listings tab.</p>
+          <p>No listings yet.<br>Add one in the Listings tab.</p>
         </div>
       </div>
     </div>
@@ -1295,13 +1289,14 @@
     </div>
     <form id="add-listing-form" onsubmit="submitListing(event)">
       <div class="form-group"><label>Street address *</label><input id="l-address" type="text" placeholder="Start typing an address…" required autocomplete="off" /></div>
+      <div class="form-group"><label>Suburb *</label><input id="l-suburb" type="text" placeholder="Melbourne" required /></div>
       <div class="form-row-2">
-        <div class="form-group"><label>Suburb *</label><input id="l-suburb" type="text" placeholder="Melbourne" required /></div>
-        <div class="form-group"><label>Price / guide</label><input id="l-price" type="text" placeholder="$1,200,000" /></div>
+        <div class="form-group"><label>Price from</label><input id="l-price-min" type="text" placeholder="$1,100,000" /></div>
+        <div class="form-group"><label>Price to</label><input id="l-price-max" type="text" placeholder="$1,300,000" /></div>
       </div>
       <div class="form-row-2">
         <div class="form-group"><label>Property type</label><select id="l-type"><option>House</option><option>Apartment</option><option>Townhouse</option><option>Land</option><option>Other</option></select></div>
-        <div class="form-group"><label>Status</label><select id="l-status"><option>Off Market</option><option>Pre-Market</option><option>Withdrawn</option></select></div>
+        <div class="form-group"><label>Status</label><select id="l-status"><option>Off Market</option><option>Pre-Market</option><option>Available</option><option>Withdrawn</option></select></div>
       </div>
       <div class="form-row-3">
         <div class="form-group"><label>Beds</label><input id="l-beds" type="number" min="0" max="20" placeholder="3" /></div>
