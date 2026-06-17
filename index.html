@@ -249,7 +249,7 @@
           toastMsg="Listing added!";
         }
         saved=true;
-      } catch(err) { setErr("listing-err","Failed to save. Please try again."); console.error(err); }
+      } catch(err) { setErr("listing-err", `Error: ${err.code || err.message}`); console.error(err); }
       finally { btn.disabled=false; btn.textContent = editingListingId?"Save Changes":"Add Listing"; }
       if (saved) { hideModal("modal-add-listing"); editingListingId=null; renderListings(); renderDashboard(); toast(toastMsg); }
     };
