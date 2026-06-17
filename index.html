@@ -793,6 +793,29 @@
     /* ── Panes ─────────────────────────────────────────────────────────────── */
     .pane { padding:1.5rem; max-width:1400px; margin:0 auto; width:100%; }
 
+    /* ── Dashboard background ─────────────────────────────────────────────── */
+    #pane-dashboard {
+      background-image: url('bg-dashboard.jpg');
+      background-size: cover;
+      background-position: center top;
+      min-height: 100vh;
+    }
+    #pane-dashboard .stats-bar,
+    #pane-dashboard .dash-section-title,
+    #pane-dashboard .grid,
+    #pane-dashboard .empty-state {
+      position: relative;
+      z-index: 1;
+    }
+    #pane-dashboard::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background: rgba(10, 15, 30, 0.62);
+      z-index: 0;
+      pointer-events: none;
+    }
+
     /* ── Dashboard stats ───────────────────────────────────────────────────── */
     .stats-bar { display:grid; grid-template-columns:repeat(3,1fr); gap:.75rem; margin-bottom:1.75rem; }
     .stat-card {
