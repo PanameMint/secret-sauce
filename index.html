@@ -37,6 +37,7 @@
 
     let currentUser = null;
     let currentUsername = "";
+    let _pendingSetPasswordUser = null;
     let listings    = [];
     let buyers      = [];
     let activeTab   = "dashboard";
@@ -48,49 +49,46 @@
     onAuthStateChanged(auth, async (user) => {
       currentUser = user;
       if (user) {
-        const isFirstLogin = user.metadata.creationTime === user.metadata.lastSignInTime;
-        if (isFirstLogin && !user.providerData.some(p => p.providerId === 'password' && user.metadata.creationTime !== user.metadata.lastSignInTime)) {
-          const needsSetPw = sessionStorage.getItem(`set_pw_${user.uid}`);
-          if (!needsSetPw) {
-            sessionStorage.setItem(`set_pw_${user.uid}`, "1");
-            _pendingSetPasswordUser = user;
-            hide("auth-screen"); hide("hero-screen"); hide("app-screen");
-            show("set-password-screen");
-            return;
-          }
+        // First-login: creationTime and lastSignInTime match only on very first sign-in
+        const isFirstLogin = user.metadata.creationTime === user.metadata.lastSignInTime
+          && !sessionStorage.getItem(`set_pw_done_${user.uid}`);
+        if (isFirstLogin) {
+          sessionStorage.setItem(`set_pw_done_${user.uid}`, "1");
+          _pendingSetPasswordUser = user;
+          hide("auth-screen"); hide("hero-screen"); hide("app-screen");
+          show("set-password-screen");
+          return;
         }
+
+        try {
+          const userSnap = await getDoc(doc(db, "users", user.uid));
+          currentUsername = userSnap.exists() ? (userSnap.data().username || user.email) : user.email;
+        } catch { currentUsername = user.email; }
+
         hide("set-password-screen");
-        const userSnap = await getDoc(doc(db, "users", user.uid));
-        currentUsername = userSnap.exists() ? (userSnap.data().username || user.email) : user.email;
         show("app-screen"); hide("auth-screen"); hide("hero-screen");
         el("user-name").textContent = currentUsername;
-        loadAll();
-        const welcomeKey = `welcomed_${user.uid}`;
-        const name = currentUsername;
-        if (!sessionStorage.getItem("session_welcomed")) {
-          sessionStorage.setItem("session_welcomed", "1");
-          el("welcome-name").textContent = name;
-          if (!localStorage.getItem(welcomeKey)) {
-            localStorage.setItem(welcomeKey, "1");
-            el("welcome-heading").textContent = `Welcome, ${name}!`;
-            el("welcome-msg").textContent = "Just like the knights of old, your seat in this fellowship is equal and your presence is vital to our collective mission. Together, let's embark on this digital quest toward shared glory and immense riches!";
-            el("welcome-cta").textContent = "Let's go ⚔️";
-          } else {
-            el("welcome-heading").textContent = `Welcome back, ${name}!`;
-            el("welcome-msg").textContent = "Seize your fortune. What we do in life echoes in eternity.";
-            el("welcome-cta").textContent = "Let's go 💰";
-          }
-          setTimeout(() => showModal("modal-welcome"), 600);
-        }
+        await loadAll();
+        showWelcome(user.uid);
       } else {
-        sessionStorage.removeItem("session_welcomed");
         show("hero-screen"); show("auth-screen"); hide("app-screen");
+        hide("set-password-screen");
       }
     });
 
-    window.closeWelcome = () => hideModal("modal-welcome");
+    function showWelcome(uid) {
+      const key = `welcomed_${uid}`;
+      const isFirst = !localStorage.getItem(key);
+      localStorage.setItem(key, "1");
+      el("welcome-heading").textContent = isFirst ? `Welcome, ${currentUsername}!` : `Welcome back, ${currentUsername}!`;
+      el("welcome-msg").textContent = isFirst
+        ? "Just like the knights of old, your seat in this fellowship is equal and your presence is vital to our collective mission. Together, let's embark on this digital quest toward shared glory and immense riches!"
+        : "Seize your fortune. What we do in life echoes in eternity.";
+      el("welcome-cta").textContent = isFirst ? "Let's go ⚔️" : "Let's go 💰";
+      setTimeout(() => showModal("modal-welcome"), 600);
+    }
 
-    let _pendingSetPasswordUser = null;
+    window.closeWelcome = () => hideModal("modal-welcome");
 
     window.handleLogin = async (e) => {
       e.preventDefault();
@@ -129,9 +127,17 @@
       btn.disabled = true; btn.textContent = "Saving…";
       try {
         await updatePassword(_pendingSetPasswordUser, newPw);
+        const u = _pendingSetPasswordUser;
         _pendingSetPasswordUser = null;
+        try {
+          const userSnap = await getDoc(doc(db, "users", u.uid));
+          currentUsername = userSnap.exists() ? (userSnap.data().username || u.email) : u.email;
+        } catch { currentUsername = u.email; }
         hide("set-password-screen");
-        show("app-screen");
+        show("app-screen"); hide("auth-screen"); hide("hero-screen");
+        el("user-name").textContent = currentUsername;
+        await loadAll();
+        showWelcome(u.uid);
       } catch (err) {
         setSetPwErr(err.code === "auth/requires-recent-login"
           ? "Session expired — please log in again."
@@ -140,7 +146,7 @@
       }
     };
 
-    window.handleLogout = () => { sessionStorage.removeItem("session_welcomed"); signOut(auth); };
+    window.handleLogout = () => signOut(auth);
 
     function setSetPwErr(m) { el("set-pw-error").textContent = m; }
 
@@ -570,7 +576,7 @@
     // ── Matching ───────────────────────────────────────────────────────────
     function buyerMatchesListing(b, l) {
       const suburbMatch = !b.suburbs||!l.suburb||
-        b.suburbs.toLowerCase().split(/[,;\s]+/).some(s=>s&&l.suburb.toLowerCase().includes(s));
+        b.suburbs.toLowerCase().split(/[,;]+/).map(s=>s.trim()).filter(Boolean).some(s=>l.suburb.toLowerCase().includes(s));
       const typeMatch   = !b.propertyType||b.propertyType==="Any"||
         b.propertyType?.toLowerCase()===l.propertyType?.toLowerCase();
       const maxBudget   = parsePrice(b.budgetMax);
@@ -636,7 +642,7 @@
     function hideModal(id)  { hide(id); document.body.style.overflow=""; }
 
     document.addEventListener("click", e => {
-      ["modal-add-listing","modal-add-buyer","modal-matches","modal-underbidder"]
+      ["modal-add-listing","modal-add-buyer","modal-matches","modal-underbidder","modal-welcome"]
         .forEach(id => { if (e.target.id===id) hideModal(id); });
     });
 
@@ -816,7 +822,6 @@
       position: fixed; inset: 0; display: flex; align-items: center;
       justify-content: center; background: var(--brand); z-index: 900;
     }
-    #set-password-screen.hidden { display: none; }
     .auth-notice {
       margin-top:1.25rem; padding:.75rem 1rem;
       background:var(--accent-dim); border:1px solid var(--accent-bdr);
@@ -1161,7 +1166,6 @@
       .grid { grid-template-columns:1fr; }
       .pane { padding:1rem .75rem; }
       .modal-box { padding:1.25rem; }
-      .tab-nav-btn { padding:.65rem .85rem; font-size:.72rem; }
       .stats-bar { grid-template-columns:1fr 1fr; gap:.5rem; }
       .stat-num { font-size:1.6rem; }
     }
@@ -1437,7 +1441,7 @@
       </div>
       <div class="form-group">
         <label>Suburbs of interest</label>
-        <div class="suburb-chip-wrap" id="suburb-chip-wrap" onclick="el('b-suburb-input').focus()">
+        <div class="suburb-chip-wrap" id="suburb-chip-wrap" onclick="document.getElementById('b-suburb-input').focus()">
           <input id="b-suburb-input" class="suburb-chip-input" type="text" placeholder="Type suburb, press Enter…" autocomplete="off" />
         </div>
         <input type="hidden" id="b-suburbs" />
