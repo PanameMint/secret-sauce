@@ -49,10 +49,29 @@
         show("app-screen"); hide("auth-screen"); hide("hero-screen");
         el("user-name").textContent = user.displayName || user.email;
         loadAll();
+        const welcomeKey = `welcomed_${user.uid}`;
+        const name = user.displayName || user.email;
+        if (!sessionStorage.getItem("session_welcomed")) {
+          sessionStorage.setItem("session_welcomed", "1");
+          el("welcome-name").textContent = name;
+          if (!localStorage.getItem(welcomeKey)) {
+            localStorage.setItem(welcomeKey, "1");
+            el("welcome-heading").textContent = `Welcome, ${name}!`;
+            el("welcome-msg").textContent = "Just like the knights of old, your seat in this fellowship is equal and your presence is vital to our collective mission. Together, let's embark on this digital quest toward shared glory and immense riches!";
+            el("welcome-cta").textContent = "Let's go ⚔️";
+          } else {
+            el("welcome-heading").textContent = `Welcome back, ${name}!`;
+            el("welcome-msg").textContent = "Seize your fortune. What we do in life echoes in eternity.";
+            el("welcome-cta").textContent = "Let's go 💰";
+          }
+          setTimeout(() => showModal("modal-welcome"), 600);
+        }
       } else {
         show("hero-screen"); show("auth-screen"); hide("app-screen");
       }
     });
+
+    window.closeWelcome = () => hideModal("modal-welcome");
 
     window.handleLogin = async (e) => {
       e.preventDefault();
@@ -210,6 +229,7 @@
       if (!address||!suburb) { setErr("listing-err","Address and suburb are required."); return; }
       const btn=el("l-submit"); btn.disabled=true;
       btn.textContent = editingListingId ? "Saving…" : "Adding…";
+      let saved=false, toastMsg="";
       try {
         if (editingListingId) {
           await updateDoc(doc(db,"listings",editingListingId),{
@@ -217,7 +237,7 @@
           });
           const idx = listings.findIndex(l=>l.id===editingListingId);
           if (idx>-1) Object.assign(listings[idx],{address,suburb,priceMin,priceMax,propertyType:propType,status,notes,beds,baths,cars});
-          hideModal("modal-add-listing"); renderListings(); renderDashboard(); toast("Listing updated!");
+          toastMsg="Listing updated!";
         } else {
           const ref = await addDoc(collection(db,"listings"),{
             address,suburb,priceMin,priceMax,propertyType:propType,status,notes,beds,baths,cars,
@@ -226,10 +246,12 @@
           });
           listings.unshift({id:ref.id,address,suburb,priceMin,priceMax,propertyType:propType,status,notes,beds,baths,cars,
             addedByUid:currentUser.uid,addedByName:currentUser.displayName||currentUser.email});
-          hideModal("modal-add-listing"); renderListings(); renderDashboard(); toast("Listing added!");
+          toastMsg="Listing added!";
         }
+        saved=true;
       } catch(err) { setErr("listing-err","Failed to save. Please try again."); console.error(err); }
-      finally { btn.disabled=false; btn.textContent = editingListingId ? "Save Changes" : "Add Listing"; }
+      finally { btn.disabled=false; btn.textContent = editingListingId?"Save Changes":"Add Listing"; }
+      if (saved) { hideModal("modal-add-listing"); editingListingId=null; renderListings(); renderDashboard(); toast(toastMsg); }
     };
 
     // ══════════════════════════════════════════════════════════════════════
@@ -415,6 +437,7 @@
       if (!name) { setErr("buyer-err","Buyer name is required."); return; }
       const btn=el("b-submit"); btn.disabled=true;
       btn.textContent = editingBuyerId ? "Saving…" : "Adding…";
+      let saved=false, toastMsg="";
       try {
         if (editingBuyerId) {
           await updateDoc(doc(db,"buyers",editingBuyerId),{
@@ -422,8 +445,7 @@
           });
           const idx = buyers.findIndex(b=>b.id===editingBuyerId);
           if (idx>-1) Object.assign(buyers[idx],{name,budgetMin,budgetMax,suburbs,propertyType:propType,boxdice,notes});
-          hideModal("modal-add-buyer"); renderBuyers(); renderDashboard(); renderListings();
-          toast("Buyer updated!");
+          toastMsg="Buyer updated!";
         } else {
           const ref = await addDoc(collection(db,"buyers"),{
             name,budgetMin,budgetMax,suburbs,
@@ -436,45 +458,60 @@
           buyers.unshift({id:ref.id,name,budgetMin,budgetMax,suburbs,
             propertyType:propType,boxdice,notes,isHot:false,underBidderHistory:[],
             addedByUid:currentUser.uid,addedByName:currentUser.displayName||currentUser.email});
-          hideModal("modal-add-buyer"); renderBuyers(); renderDashboard(); renderListings();
-          toast("Buyer added!");
+          toastMsg="Buyer added!";
         }
+        saved=true;
       } catch(err) { setErr("buyer-err","Failed to save. Please try again."); console.error(err); }
-      finally { btn.disabled=false; btn.textContent = editingBuyerId ? "Save Changes" : "Add Buyer"; }
+      finally { btn.disabled=false; btn.textContent = editingBuyerId?"Save Changes":"Add Buyer"; }
+      if (saved) { hideModal("modal-add-buyer"); editingBuyerId=null; renderBuyers(); renderDashboard(); renderListings(); toast(toastMsg); }
     };
 
     // ══════════════════════════════════════════════════════════════════════
     // DASHBOARD
     // ══════════════════════════════════════════════════════════════════════
+    function countMatches() {
+      let count = 0;
+      for (const b of buyers) {
+        for (const l of listings) {
+          if (l.status === "Withdrawn") continue;
+          const suburbMatch = !b.suburbs || !l.suburb ||
+            b.suburbs.toLowerCase().split(/[,;\s]+/).some(s => s && l.suburb.toLowerCase().includes(s));
+          const listPrice  = parsePrice(l.priceMin || l.priceMax);
+          const maxBudget  = parsePrice(b.budgetMax);
+          const priceMatch = !listPrice || !maxBudget || listPrice <= maxBudget * 1.1;
+          if (suburbMatch && priceMatch) count++;
+        }
+      }
+      return count;
+    }
+
     function renderDashboard() {
       const hotBuyers     = buyers.filter(b => b.isHot);
       const activeListing = listings.filter(l => l.status !== "Withdrawn");
+      const underbidders  = buyers.filter(b => b.underBidderHistory?.length);
 
       // Stats bar
       el("stat-hot").textContent       = hotBuyers.length;
       el("stat-available").textContent = activeListing.length;
-      el("stat-listings").textContent  = listings.length;
-      el("stat-buyers").textContent    = buyers.length;
+      el("stat-matches").textContent   = countMatches();
 
-      // All buyers grid
-      const hbGrid = el("dash-hot-buyers");
-      hbGrid.innerHTML = "";
-      if (buyers.length) {
-        hide("empty-hot");
-        buyers.forEach(b => hbGrid.appendChild(buildBuyerCard(b, true)));
-      } else {
-        show("empty-hot");
-      }
-
-      // All listings grid
+      // All listings
       const alGrid = el("dash-listings");
       alGrid.innerHTML = "";
-      if (listings.length) {
-        hide("empty-avail");
-        listings.forEach(l => alGrid.appendChild(buildListingCard(l, true)));
-      } else {
-        show("empty-avail");
-      }
+      if (listings.length) { hide("empty-avail"); listings.forEach(l => alGrid.appendChild(buildListingCard(l, false))); }
+      else { show("empty-avail"); }
+
+      // All buyers
+      const hbGrid = el("dash-hot-buyers");
+      hbGrid.innerHTML = "";
+      if (buyers.length) { hide("empty-hot"); buyers.forEach(b => hbGrid.appendChild(buildBuyerCard(b, false))); }
+      else { show("empty-hot"); }
+
+      // Underbidders
+      const ubGrid = el("dash-underbidders");
+      ubGrid.innerHTML = "";
+      if (underbidders.length) { hide("empty-ub"); underbidders.forEach(b => ubGrid.appendChild(buildBuyerCard(b, false))); }
+      else { show("empty-ub"); }
     }
 
     // ── Matching ───────────────────────────────────────────────────────────
@@ -765,7 +802,7 @@
     .pane { padding:1.5rem; max-width:1400px; margin:0 auto; width:100%; }
 
     /* ── Dashboard stats ───────────────────────────────────────────────────── */
-    .stats-bar { display:grid; grid-template-columns:repeat(4,1fr); gap:.75rem; margin-bottom:1.75rem; }
+    .stats-bar { display:grid; grid-template-columns:repeat(3,1fr); gap:.75rem; margin-bottom:1.75rem; }
     .stat-card {
       background:var(--surface); border-radius:var(--radius); padding:1.1rem 1.25rem;
       box-shadow:var(--shadow); border:1px solid var(--border); text-align:center;
@@ -1213,35 +1250,22 @@
         <div class="stat-label">✅ Available Listings</div>
       </div>
       <div class="stat-card stat-total-l">
-        <div class="stat-num" id="stat-listings">—</div>
-        <div class="stat-label">🏠 Total Listings</div>
+        <div class="stat-num" id="stat-matches">—</div>
+        <div class="stat-label">🎯 Total Matches</div>
       </div>
     </div>
 
-    <div class="dash-columns">
-      <div>
-        <div class="dash-section-title hot-title">
-          👥 All Buyers
-          <span class="pill" id="stat-hot-pill">0</span>
-        </div>
-        <div id="dash-hot-buyers" class="dash-grid"></div>
-        <div id="empty-hot" class="empty-state hidden">
-          <div class="icon">👥</div>
-          <p>No buyers yet.<br>Add one in the Buyers tab.</p>
-        </div>
-      </div>
-      <div>
-        <div class="dash-section-title">
-          🏠 All Listings
-          <span class="pill" id="stat-avail-pill">0</span>
-        </div>
-        <div id="dash-listings" class="dash-grid"></div>
-        <div id="empty-avail" class="empty-state hidden">
-          <div class="icon">🏡</div>
-          <p>No listings yet.<br>Add one in the Listings tab.</p>
-        </div>
-      </div>
-    </div>
+    <div class="dash-section-title">🏠 All Listings</div>
+    <div id="dash-listings" class="grid" style="margin-bottom:2rem"></div>
+    <div id="empty-avail" class="empty-state hidden"><div class="icon">🏡</div><p>No listings yet — add one in the Listings tab.</p></div>
+
+    <div class="dash-section-title">👥 All Buyers</div>
+    <div id="dash-hot-buyers" class="grid" style="margin-bottom:2rem"></div>
+    <div id="empty-hot" class="empty-state hidden"><div class="icon">👥</div><p>No buyers yet — add one in the Buyers tab.</p></div>
+
+    <div class="dash-section-title">🔴 Underbidders</div>
+    <div id="dash-underbidders" class="grid" style="margin-bottom:2rem"></div>
+    <div id="empty-ub" class="empty-state hidden"><div class="icon">🔴</div><p>No underbidders recorded yet.</p></div>
   </div>
 
   <!-- ── LISTINGS PANE ──────────────────────────────────────────────────── -->
@@ -1373,6 +1397,16 @@
       <button class="btn-close" onclick="closeMatches()">✕</button>
     </div>
     <div id="match-modal-body"></div>
+  </div>
+</div>
+
+<!-- ══════════════════════ WELCOME MODAL ══════════════════════════════════════ -->
+<div id="modal-welcome" class="modal-backdrop hidden">
+  <div class="modal-box modal-box-sm" style="text-align:center">
+    <div style="font-size:2.5rem;margin-bottom:1rem">⚔️</div>
+    <h2 id="welcome-heading" style="font-size:1.1rem;font-weight:900;color:var(--brand);margin-bottom:.75rem"></h2>
+    <p id="welcome-msg" style="font-size:.88rem;color:var(--muted);line-height:1.75;margin-bottom:1.5rem"></p>
+    <button id="welcome-cta" class="btn-primary" onclick="closeWelcome()" style="max-width:200px;margin:0 auto"></button>
   </div>
 </div>
 
