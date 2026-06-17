@@ -171,9 +171,6 @@
 
     window.submitListing = async (e) => {
       e.preventDefault(); clearErr("listing-err");
-      // fallback: read typed text from PlaceAutocompleteElement if no place was selected
-      const acInput = el("l-address-wrap")?.querySelector("input");
-      if (acInput?.value && !el("l-address").value) el("l-address").value = acInput.value;
       const address=val("l-address"), suburb=val("l-suburb"), price=val("l-price"),
             propType=val("l-type"), status=val("l-status"), notes=val("l-notes"),
             beds=val("l-beds"), baths=val("l-baths"), cars=val("l-cars");
@@ -513,28 +510,58 @@
       });
     });
 
-    // ── Google Maps address autocomplete (Places API New) ─────────────────
+    // ── Google Maps address autocomplete (Places API New — programmatic) ───
     let _acInitialized = false;
     async function initAddressAutocomplete() {
-      if (_acInitialized || !window.google) return;
+      if (_acInitialized) return;
+      // wait for google maps to load
+      for (let i = 0; i < 20; i++) {
+        if (window.google?.maps) break;
+        await new Promise(r => setTimeout(r, 200));
+      }
+      if (!window.google?.maps) return;
       try {
-        const { PlaceAutocompleteElement } = await google.maps.importLibrary("places");
-        const wrap = el("l-address-wrap");
-        if (!wrap) return;
-        const placeAC = new PlaceAutocompleteElement({
-          componentRestrictions: { country: "au" },
-          types: ["address"],
-        });
-        wrap.appendChild(placeAC);
+        const { AutocompleteSessionToken, AutocompleteSuggestion } =
+          await google.maps.importLibrary("places");
+        const input    = el("l-address");
+        const dropdown = el("ac-dropdown");
+        let sessionToken = new AutocompleteSessionToken();
         _acInitialized = true;
-        placeAC.addEventListener("gmp-placeselect", async ({ place }) => {
-          await place.fetchFields({ fields: ["addressComponents","formattedAddress"] });
-          const comps = place.addressComponents || [];
-          const locality = comps.find(c => c.types.includes("locality"));
-          if (locality) el("l-suburb").value = locality.longText;
-          const num   = comps.find(c => c.types.includes("street_number"))?.longText || "";
-          const route = comps.find(c => c.types.includes("route"))?.longText || "";
-          el("l-address").value = [num, route].filter(Boolean).join(" ") || place.formattedAddress || "";
+
+        input.addEventListener("input", async () => {
+          const q = input.value.trim();
+          if (q.length < 3) { dropdown.innerHTML = ""; return; }
+          try {
+            const { suggestions } = await AutocompleteSuggestion.fetchAutocompleteSuggestions({
+              input: q, sessionToken,
+              includedRegionCodes: ["au"],
+              types: ["address"],
+            });
+            dropdown.innerHTML = "";
+            suggestions.slice(0,5).forEach(s => {
+              const item = document.createElement("div");
+              item.className = "ac-item";
+              item.textContent = s.placePrediction.text.text;
+              item.addEventListener("mousedown", async (e) => {
+                e.preventDefault();
+                const place = s.placePrediction.toPlace();
+                await place.fetchFields({ fields: ["addressComponents","formattedAddress"] });
+                const comps    = place.addressComponents || [];
+                const locality = comps.find(c => c.types.includes("locality"));
+                if (locality) el("l-suburb").value = locality.longText;
+                const num   = comps.find(c => c.types.includes("street_number"))?.longText || "";
+                const route = comps.find(c => c.types.includes("route"))?.longText || "";
+                input.value = [num, route].filter(Boolean).join(" ") || place.formattedAddress || "";
+                dropdown.innerHTML = "";
+                sessionToken = new AutocompleteSessionToken();
+              });
+              dropdown.appendChild(item);
+            });
+          } catch(e) { console.error("Autocomplete fetch error:", e); }
+        });
+
+        input.addEventListener("blur", () => {
+          setTimeout(() => { dropdown.innerHTML = ""; }, 200);
         });
       } catch(e) { console.error("Address autocomplete init error:", e); }
     }
@@ -800,15 +827,19 @@
       border-radius:5px; padding:.45rem .7rem; line-height:1.55; border:1px solid var(--border);
     }
     .form-row-3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:.75rem; }
-    .place-ac-wrap { width:100%; }
-    .place-ac-wrap gmp-place-autocomplete { width:100%; display:block; }
-    .place-ac-wrap gmp-place-autocomplete::part(input) {
-      width:100%; padding:.65rem .85rem; border:1.5px solid var(--border);
-      border-radius:4px; font-size:.9rem; color:var(--text); background:var(--bg);
-      outline:none; font-family:'Inter',sans-serif; transition:border-color .15s;
-      box-sizing:border-box;
+    .ac-dropdown {
+      position:absolute; left:0; right:0; top:100%;
+      background:var(--surface); border:1.5px solid var(--accent-bdr);
+      border-radius:4px; box-shadow:0 4px 16px rgba(0,0,0,.12);
+      z-index:9999; overflow:hidden;
     }
-    .place-ac-wrap gmp-place-autocomplete::part(input):focus { border-color:var(--accent); }
+    .ac-dropdown:empty { display:none; }
+    .ac-item {
+      padding:.65rem .85rem; font-size:.85rem; cursor:pointer;
+      color:var(--text); border-bottom:1px solid var(--border); line-height:1.4;
+    }
+    .ac-item:last-child { border-bottom:none; }
+    .ac-item:hover { background:var(--accent-dim); }
     .card-footer {
       display:flex; justify-content:space-between; align-items:center; margin-top:auto;
       padding-top:.7rem; border-top:1px solid var(--border); flex-wrap:wrap; gap:.4rem;
@@ -1214,7 +1245,7 @@
       <button class="btn-close" onclick="closeAddListing()">✕</button>
     </div>
     <form id="add-listing-form" onsubmit="submitListing(event)">
-      <div class="form-group"><label>Street address *</label><div id="l-address-wrap" class="place-ac-wrap"></div><input type="hidden" id="l-address" /></div>
+      <div class="form-group" style="position:relative"><label>Street address *</label><input id="l-address" type="text" placeholder="Start typing an address…" required autocomplete="off" /><div id="ac-dropdown" class="ac-dropdown"></div></div>
       <div class="form-row-2">
         <div class="form-group"><label>Suburb *</label><input id="l-suburb" type="text" placeholder="Melbourne" required /></div>
         <div class="form-group"><label>Price / guide</label><input id="l-price" type="text" placeholder="$1,200,000" /></div>
