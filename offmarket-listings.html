@@ -9,7 +9,7 @@
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
     import {
-      getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile,
+      getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged,
     } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
     import {
       getFirestore, collection, addDoc, getDocs, deleteDoc, updateDoc,
@@ -46,37 +46,13 @@
     onAuthStateChanged(auth, (user) => {
       currentUser = user;
       if (user) {
-        hide("auth-screen"); hide("hero-screen");
-        if (!user.displayName) {
-          hide("app-screen");
-          showModal("modal-set-name");
-        } else {
-          show("app-screen");
-          el("user-name").textContent = user.displayName;
-          loadAll();
-        }
+        show("app-screen"); hide("auth-screen"); hide("hero-screen");
+        el("user-name").textContent = user.displayName || user.email;
+        loadAll();
       } else {
         show("hero-screen"); show("auth-screen"); hide("app-screen");
       }
     });
-
-    window.submitDisplayName = async (e) => {
-      e.preventDefault();
-      const name = el("input-display-name").value.trim();
-      if (!name) return;
-      const btn = el("btn-set-name"); btn.disabled = true; btn.textContent = "Saving…";
-      try {
-        await updateProfile(auth.currentUser, { displayName: name });
-        currentUser = auth.currentUser;
-        hideModal("modal-set-name");
-        show("app-screen");
-        el("user-name").textContent = name;
-        loadAll();
-      } catch(err) {
-        el("set-name-err").textContent = "Failed to save name. Please try again.";
-        btn.disabled = false; btn.textContent = "Continue";
-      }
-    };
 
     window.handleLogin = async (e) => {
       e.preventDefault();
@@ -1407,22 +1383,5 @@
 
 <div id="toast" class="toast"></div>
 
-<!-- ══════════════════════ SET DISPLAY NAME MODAL ════════════════════════════ -->
-<div id="modal-set-name" class="modal-backdrop hidden">
-  <div class="modal-box modal-box-sm">
-    <div class="modal-header">
-      <h2>Welcome — choose a username</h2>
-    </div>
-    <p class="modal-sub">This is how you'll appear to the rest of the team. You can't change it later.</p>
-    <form onsubmit="submitDisplayName(event)">
-      <div class="form-group">
-        <label>Username *</label>
-        <input id="input-display-name" type="text" placeholder="e.g. JaneS" required autocomplete="off" />
-      </div>
-      <p id="set-name-err" class="form-err"></p>
-      <button id="btn-set-name" type="submit" class="btn-primary">Continue →</button>
-    </form>
-  </div>
-</div>
 </body>
 </html>
