@@ -167,7 +167,7 @@
         </div>
         <div class="card-address">${l.address}</div>
         <div class="card-suburb">${l.suburb||""}</div>
-        <div class="card-price">${l.priceMin&&l.priceMax ? `${l.priceMin} – ${l.priceMax}` : l.priceMin||l.priceMax||"Price on request"}</div>
+        <div class="card-price">${l.priceMin&&l.priceMax ? `$${fmt(l.priceMin)} – $${fmt(l.priceMax)}` : l.priceMin ? `$${fmt(l.priceMin)}` : l.priceMax ? `$${fmt(l.priceMax)}` : "Price on request"}</div>
         ${(l.beds||l.baths||l.cars)?`<div class="card-specs">${l.beds?`🛏 ${l.beds}`:""}${l.baths?` · 🚿 ${l.baths}`:""}${l.cars?` · 🚗 ${l.cars}`:""}</div>`:""}
         ${(!compact&&l.notes)?`<div class="card-notes">${l.notes}</div>`:""}
         ${matchChip}
@@ -313,7 +313,7 @@
           </div>
         </div>
         <div class="card-address">${b.name}</div>
-        <div class="buyer-row"><span class="buyer-label">Budget</span><span>${b.budgetMin||"?"} – ${b.budgetMax||"?"}</span></div>
+        <div class="buyer-row"><span class="buyer-label">Budget</span><span>${b.budgetMin ? `$${fmt(b.budgetMin)}` : "?"} – ${b.budgetMax ? `$${fmt(b.budgetMax)}` : "?"}</span></div>
         <div class="buyer-row"><span class="buyer-label">Suburbs</span><span>${b.suburbs||"Flexible"}</span></div>
         ${!compact&&b.boxdice?`<div class="buyer-contact"><a href="${b.boxdice}" target="_blank" rel="noopener" class="bd-link">📋 Box &amp; Dice profile ↗</a></div>`:""}
         ${!compact&&b.notes?`<div class="card-notes">${b.notes}</div>`:""}
@@ -533,7 +533,7 @@
         ? matched.map(b=>`<div class="match-row">
             <div class="match-name">${b.isHot?'🔥 ':''}<strong>${b.name}</strong></div>
             <div class="match-detail">${b.phone?`📞 ${b.phone}`:""} ${b.email?`✉️ ${b.email}`:""}</div>
-            <div class="match-detail">Budget: ${b.budgetMin||"?"} – ${b.budgetMax||"?"} · ${b.suburbs||"Flexible"}</div>
+            <div class="match-detail">Budget: ${b.budgetMin ? `$${fmt(b.budgetMin)}` : "?"} – ${b.budgetMax ? `$${fmt(b.budgetMax)}` : "?"} · ${b.suburbs||"Flexible"}</div>
             ${b.underBidderHistory?.length?`<div class="match-detail" style="color:#dc2626">🔴 Last missed: ${b.underBidderHistory[b.underBidderHistory.length-1].address} at ${b.underBidderHistory[b.underBidderHistory.length-1].price}</div>`:""}
             <div class="match-agent">Added by ${b.addedByName||"Unknown"}</div>
           </div>`).join("")
@@ -549,7 +549,7 @@
       el("match-modal-body").innerHTML = matched.length
         ? matched.map(l=>`<div class="match-row">
             <div class="match-name">${l.address}, ${l.suburb||""}</div>
-            <div class="match-detail">${l.propertyType||""} · ${l.priceMin&&l.priceMax?`${l.priceMin} – ${l.priceMax}`:l.priceMin||l.priceMax||"Price on request"}</div>
+            <div class="match-detail">${l.propertyType||""} · ${l.priceMin&&l.priceMax?`$${fmt(l.priceMin)} – $${fmt(l.priceMax)}`:l.priceMin?`$${fmt(l.priceMin)}`:l.priceMax?`$${fmt(l.priceMax)}`:"Price on request"}</div>
             <div class="match-agent">Added by ${l.addedByName||"Unknown"}</div>
           </div>`).join("")
         : "<p style='color:var(--muted);padding:1rem 0'>No matching listings found.</p>";
@@ -573,6 +573,7 @@
     function setAuthErr(m)  { el("auth-error").textContent=m; }
     function initial(n)     { return (n||"?")[0].toUpperCase(); }
     function parsePrice(s)  { return parseInt((s||"").replace(/[^0-9]/g,""))||0; }
+    function fmt(s) { const n=parsePrice(s); return n ? n.toLocaleString("en-AU") : (s||""); }
     function spinner()      { return '<div class="spinner"></div>'; }
     function errMsg(m)      { return `<p class="grid-err">${m}</p>`; }
     function showModal(id)  { show(id); document.body.style.overflow="hidden"; }
@@ -795,25 +796,8 @@
 
     /* ── Dashboard background ─────────────────────────────────────────────── */
     #pane-dashboard {
-      background-image: url('bg-dashboard.jpg');
-      background-size: cover;
-      background-position: center top;
+      background: #eef2f7;
       min-height: 100vh;
-    }
-    #pane-dashboard .stats-bar,
-    #pane-dashboard .dash-section-title,
-    #pane-dashboard .grid,
-    #pane-dashboard .empty-state {
-      position: relative;
-      z-index: 1;
-    }
-    #pane-dashboard::before {
-      content: '';
-      position: fixed;
-      inset: 0;
-      background: rgba(10, 15, 30, 0.62);
-      z-index: 0;
-      pointer-events: none;
     }
 
     /* ── Dashboard stats ───────────────────────────────────────────────────── */
