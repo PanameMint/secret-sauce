@@ -129,7 +129,7 @@
     function buildListingCard(l, compact=false) {
       const isOwner = currentUser?.uid === l.addedByUid;
       const icon  = {House:"🏠",Apartment:"🏢",Townhouse:"🏘",Land:"🌿",Other:"📋"}[l.propertyType]||"📋";
-      const scls  = {"Available":"badge-available","Under Offer":"badge-offer","Sold":"badge-sold"}[l.status]||"";
+      const scls  = {"Off Market":"badge-offmarket","Pre-Market":"badge-premarket","Withdrawn":"badge-withdrawn"}[l.status]||"";
       const hotBuyers = buyers.filter(b => b.isHot && buyerMatchesListing(b,l));
       const matchChip = hotBuyers.length
         ? `<button class="match-chip hot-chip" onclick="showBuyerMatches('${l.id}')">🔥 ${hotBuyers.length} hot buyer${hotBuyers.length>1?"s":""}</button>`
@@ -147,6 +147,7 @@
         <div class="card-address">${l.address}</div>
         <div class="card-suburb">${l.suburb||""}</div>
         <div class="card-price">${l.price||"Price on request"}</div>
+        ${(l.beds||l.baths||l.cars)?`<div class="card-specs">${l.beds?`🛏 ${l.beds}`:""}${l.baths?` · 🚿 ${l.baths}`:""}${l.cars?` · 🚗 ${l.cars}`:""}</div>`:""}
         ${(!compact&&l.notes)?`<div class="card-notes">${l.notes}</div>`:""}
         ${matchChip}
         <div class="card-footer">
@@ -171,16 +172,17 @@
     window.submitListing = async (e) => {
       e.preventDefault(); clearErr("listing-err");
       const address=val("l-address"), suburb=val("l-suburb"), price=val("l-price"),
-            propType=val("l-type"), status=val("l-status"), notes=val("l-notes");
+            propType=val("l-type"), status=val("l-status"), notes=val("l-notes"),
+            beds=val("l-beds"), baths=val("l-baths"), cars=val("l-cars");
       if (!address||!suburb) { setErr("listing-err","Address and suburb are required."); return; }
       const btn=el("l-submit"); btn.disabled=true; btn.textContent="Adding…";
       try {
         const ref = await addDoc(collection(db,"listings"),{
-          address,suburb,price,propertyType:propType,status,notes,
+          address,suburb,price,propertyType:propType,status,notes,beds,baths,cars,
           addedByUid:currentUser.uid, addedByName:currentUser.displayName||currentUser.email,
           createdAt:serverTimestamp(),
         });
-        listings.unshift({id:ref.id,address,suburb,price,propertyType:propType,status,notes,
+        listings.unshift({id:ref.id,address,suburb,price,propertyType:propType,status,notes,beds,baths,cars,
           addedByUid:currentUser.uid,addedByName:currentUser.displayName||currentUser.email});
         hideModal("modal-add-listing"); renderListings(); renderDashboard(); toast("Listing added!");
       } catch(err) { setErr("listing-err","Failed to add. Please try again."); console.error(err); }
@@ -246,7 +248,7 @@
           </div>
         </div>
         <div class="card-address">${b.name}</div>
-        ${!compact?`<div class="buyer-contact">${b.phone?`📞 <a href="tel:${b.phone}">${b.phone}</a>`:""} ${b.email?`&ensp;✉️ <a href="mailto:${b.email}">${b.email}</a>`:""}</div>`:""}
+        ${!compact&&b.boxdice?`<div class="buyer-contact"><a href="${b.boxdice}" target="_blank" rel="noopener" class="bd-link">📋 Box &amp; Dice profile ↗</a></div>`:""}
         <div class="buyer-row"><span class="buyer-label">Budget</span><span>${b.budgetMin||"?"} – ${b.budgetMax||"?"}</span></div>
         <div class="buyer-row"><span class="buyer-label">Suburbs</span><span>${b.suburbs||"Flexible"}</span></div>
         ${!compact&&b.notes?`<div class="card-notes">${b.notes}</div>`:""}
@@ -328,28 +330,28 @@
       } catch { toast("Error deleting buyer.",true); }
     };
 
-    window.openAddBuyer  = () => { el("add-buyer-form").reset(); clearErr("buyer-err"); showModal("modal-add-buyer"); };
+    window.openAddBuyer  = () => { el("add-buyer-form").reset(); clearErr("buyer-err"); suburbChips=[]; setTimeout(renderSuburbChips,0); showModal("modal-add-buyer"); };
     window.closeAddBuyer = () => hideModal("modal-add-buyer");
 
     window.submitBuyer = async (e) => {
       e.preventDefault(); clearErr("buyer-err");
-      const name=val("b-name"), phone=val("b-phone"), email=val("b-email"),
+      const name=val("b-name"),
             budgetMin=val("b-budget-min"), budgetMax=val("b-budget-max"),
             suburbs=val("b-suburbs"), propType=val("b-type"),
-            preApproved=val("b-preapproved"), notes=val("b-notes");
+            boxdice=val("b-boxdice"), notes=val("b-notes");
       if (!name) { setErr("buyer-err","Buyer name is required."); return; }
       const btn=el("b-submit"); btn.disabled=true; btn.textContent="Adding…";
       try {
         const ref = await addDoc(collection(db,"buyers"),{
-          name,phone,email,budgetMin,budgetMax,suburbs,
-          propertyType:propType,preApproved,notes,
+          name,budgetMin,budgetMax,suburbs,
+          propertyType:propType,boxdice,notes,
           isHot:false, underBidderHistory:[],
           addedByUid:currentUser.uid,
           addedByName:currentUser.displayName||currentUser.email,
           createdAt:serverTimestamp(),
         });
-        buyers.unshift({id:ref.id,name,phone,email,budgetMin,budgetMax,suburbs,
-          propertyType:propType,preApproved,notes,isHot:false,underBidderHistory:[],
+        buyers.unshift({id:ref.id,name,budgetMin,budgetMax,suburbs,
+          propertyType:propType,boxdice,notes,isHot:false,underBidderHistory:[],
           addedByUid:currentUser.uid,addedByName:currentUser.displayName||currentUser.email});
         hideModal("modal-add-buyer"); renderBuyers(); renderDashboard(); renderListings();
         toast("Buyer added!");
@@ -467,6 +469,70 @@
         .forEach(id => { if (e.target.id===id) hideModal(id); });
     });
 
+    // ── Suburb chip input ──────────────────────────────────────────────────
+    let suburbChips = [];
+
+    function renderSuburbChips() {
+      const wrap = el("suburb-chip-wrap");
+      const input = el("b-suburb-input");
+      // remove old chips
+      wrap.querySelectorAll(".suburb-chip").forEach(c => c.remove());
+      suburbChips.forEach((s, i) => {
+        const chip = document.createElement("span");
+        chip.className = "suburb-chip";
+        chip.innerHTML = `${s}<button class="suburb-chip-x" type="button" onclick="removeSuburbChip(${i})">✕</button>`;
+        wrap.insertBefore(chip, input);
+      });
+      el("b-suburbs").value = suburbChips.join(", ");
+    }
+
+    window.removeSuburbChip = (i) => {
+      suburbChips.splice(i, 1);
+      renderSuburbChips();
+    };
+
+    window.addEventListener("load", () => {
+      const input = el("b-suburb-input");
+      if (!input) return;
+      input.addEventListener("keydown", e => {
+        if (e.key === "Enter" || e.key === "," || e.key === "Tab") {
+          e.preventDefault();
+          const v = input.value.trim().replace(/,$/, "");
+          if (v && !suburbChips.includes(v)) {
+            suburbChips.push(v);
+            renderSuburbChips();
+          }
+          input.value = "";
+        } else if (e.key === "Backspace" && !input.value && suburbChips.length) {
+          suburbChips.pop();
+          renderSuburbChips();
+        }
+      });
+    });
+
+    // ── Google Maps address autocomplete ──────────────────────────────────
+    window.initGoogleMaps = () => {
+      const addressInput = el("l-address");
+      if (!addressInput || !window.google) return;
+      const ac = new google.maps.places.Autocomplete(addressInput, {
+        componentRestrictions: { country: "au" },
+        fields: ["address_components","formatted_address"],
+        types: ["address"],
+      });
+      ac.addListener("place_changed", () => {
+        const place = ac.getPlace();
+        if (!place.address_components) return;
+        // extract suburb (locality)
+        const locality = place.address_components.find(c => c.types.includes("locality"));
+        if (locality) el("l-suburb").value = locality.long_name;
+        // set address without country suffix
+        const street = place.address_components
+          .filter(c => c.types.includes("street_number") || c.types.includes("route"))
+          .map(c => c.long_name).join(" ");
+        if (street) addressInput.value = street;
+      });
+    };
+
     function toast(msg, isError=false) {
       const t=el("toast");
       t.textContent=msg;
@@ -474,6 +540,12 @@
       setTimeout(()=>t.classList.remove("show"),3000);
     }
   </script>
+
+  <!-- ── Google Maps Places API ──────────────────────────────────────────── -->
+  <!-- 🔑 Replace AIzaSyDbddkDT76iAf2ShHrWbNdhmmwf-4OMeb8 below with your actual key        -->
+  <!--    Google Cloud Console → APIs & Services → Credentials               -->
+  <!--    Enable: Maps JavaScript API + Places API                           -->
+  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDbddkDT76iAf2ShHrWbNdhmmwf-4OMeb8&libraries=places&callback=initGoogleMaps" async defer></script>
 
   <style>
     *, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
@@ -716,10 +788,12 @@
       font-size:1.15rem; font-weight:900; color:var(--brand);
       font-family:'JetBrains Mono',monospace; letter-spacing:-0.01em;
     }
+    .card-specs { font-size:.8rem; color:var(--muted); font-weight:600; }
     .card-notes {
       font-size:.8rem; color:var(--muted); background:var(--bg-dark);
       border-radius:5px; padding:.45rem .7rem; line-height:1.55; border:1px solid var(--border);
     }
+    .form-row-3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:.75rem; }
     .card-footer {
       display:flex; justify-content:space-between; align-items:center; margin-top:auto;
       padding-top:.7rem; border-top:1px solid var(--border); flex-wrap:wrap; gap:.4rem;
@@ -735,6 +809,33 @@
     /* ── Buyer specifics ───────────────────────────────────────────────────── */
     .buyer-contact { font-size:.8rem; color:var(--muted); }
     .buyer-contact a { color:var(--forest); }
+    .bd-link { font-size:.78rem; font-weight:600; color:var(--buyer-color); text-decoration:none; }
+    .bd-link:hover { text-decoration:underline; }
+
+    /* ── Suburb chip input ─────────────────────────────────────────────────── */
+    .suburb-chip-wrap {
+      display:flex; flex-wrap:wrap; gap:.35rem; align-items:center;
+      min-height:42px; padding:.4rem .6rem;
+      border:1.5px solid var(--border); border-radius:4px;
+      background:var(--bg); cursor:text; transition:border-color .15s;
+    }
+    .suburb-chip-wrap:focus-within { border-color:var(--accent); }
+    .suburb-chip {
+      display:inline-flex; align-items:center; gap:.3rem;
+      background:var(--accent-dim); border:1px solid var(--accent-bdr);
+      color:var(--forest); border-radius:999px;
+      padding:.18rem .55rem; font-size:.75rem; font-weight:600;
+    }
+    .suburb-chip-x {
+      background:none; border:none; cursor:pointer; color:var(--muted);
+      font-size:.8rem; line-height:1; padding:0; display:flex; align-items:center;
+    }
+    .suburb-chip-x:hover { color:var(--danger); }
+    .suburb-chip-input {
+      border:none; outline:none; background:transparent;
+      font-family:'Inter',sans-serif; font-size:.85rem; color:var(--text);
+      min-width:140px; flex:1;
+    }
     .buyer-row { display:flex; gap:.5rem; font-size:.8rem; }
     .buyer-label { color:var(--muted); min-width:52px; font-weight:600; font-size:.75rem; }
 
@@ -785,10 +886,13 @@
       display:inline-block; padding:.18rem .55rem; border-radius:999px;
       font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:0.1em;
     }
-    .badge-available { background:rgba(47,185,138,0.12); color:#1a7a5a; border:1px solid rgba(47,185,138,0.25); }
-    .badge-offer     { background:var(--accent-dim); color:#7a5a00; border:1px solid var(--accent-bdr); }
-    .badge-sold      { background:rgba(212,80,80,0.08); color:#9a2020; border:1px solid rgba(212,80,80,0.2); }
-    .badge-hot       { background:var(--accent-dim); color:#7a5a00; border:1px solid var(--accent-bdr); }
+    .badge-available  { background:rgba(47,185,138,0.12); color:#1a7a5a; border:1px solid rgba(47,185,138,0.25); }
+    .badge-offer      { background:var(--accent-dim); color:#7a5a00; border:1px solid var(--accent-bdr); }
+    .badge-sold       { background:rgba(212,80,80,0.08); color:#9a2020; border:1px solid rgba(212,80,80,0.2); }
+    .badge-hot        { background:var(--accent-dim); color:#7a5a00; border:1px solid var(--accent-bdr); }
+    .badge-offmarket  { background:rgba(26,92,58,0.1); color:#1A5C3A; border:1px solid rgba(26,92,58,0.25); }
+    .badge-premarket  { background:rgba(212,168,83,0.12); color:#7a5a00; border:1px solid var(--accent-bdr); }
+    .badge-withdrawn  { background:rgba(100,100,100,0.08); color:#555; border:1px solid rgba(100,100,100,0.2); }
 
     /* ── Empty & loading ───────────────────────────────────────────────────── */
     .empty-state { text-align:center; padding:2.5rem 1rem; color:var(--muted); }
@@ -874,7 +978,7 @@
     #hero-screen {
       min-height:100vh;
       /* ↓ REPLACE THIS URL with your background image */
-      background-image: url('mia-milkhsake.jpg');
+      background-image: url('thumb-1920-586941.jpg');
       background-size:cover; background-position:center; background-color:#111;
     }
     .hero-overlay {
@@ -960,7 +1064,7 @@
         </div>
       </div>
     </div>
-    <a href="#auth-screen" class="hero-cta">Get me in ↓</a>
+    <a href="#auth-screen" class="hero-cta">Make me some money ↓</a>
   </div>
 </div>
 
@@ -1102,7 +1206,12 @@
       </div>
       <div class="form-row-2">
         <div class="form-group"><label>Property type</label><select id="l-type"><option>House</option><option>Apartment</option><option>Townhouse</option><option>Land</option><option>Other</option></select></div>
-        <div class="form-group"><label>Status</label><select id="l-status"><option>Available</option><option>Under Offer</option><option>Sold</option></select></div>
+        <div class="form-group"><label>Status</label><select id="l-status"><option>Off Market</option><option>Pre-Market</option><option>Withdrawn</option></select></div>
+      </div>
+      <div class="form-row-3">
+        <div class="form-group"><label>Beds</label><input id="l-beds" type="number" min="0" max="20" placeholder="3" /></div>
+        <div class="form-group"><label>Baths</label><input id="l-baths" type="number" min="0" max="20" placeholder="2" /></div>
+        <div class="form-group"><label>Car parks</label><input id="l-cars" type="number" min="0" max="10" placeholder="1" /></div>
       </div>
       <div class="form-group"><label>Notes</label><textarea id="l-notes" rows="3" placeholder="Vendor motivation, features, inspection access…"></textarea></div>
       <p id="listing-err" class="form-err"></p>
@@ -1124,18 +1233,18 @@
     <form id="add-buyer-form" onsubmit="submitBuyer(event)">
       <div class="form-group"><label>Full name *</label><input id="b-name" type="text" placeholder="John & Jane Smith" required /></div>
       <div class="form-row-2">
-        <div class="form-group"><label>Phone</label><input id="b-phone" type="tel" placeholder="0400 000 000" /></div>
-        <div class="form-group"><label>Email</label><input id="b-email" type="email" placeholder="buyer@email.com" /></div>
-      </div>
-      <div class="form-row-2">
         <div class="form-group"><label>Min budget</label><input id="b-budget-min" type="text" placeholder="$800,000" /></div>
         <div class="form-group"><label>Max budget</label><input id="b-budget-max" type="text" placeholder="$1,200,000" /></div>
       </div>
-      <div class="form-group"><label>Suburbs of interest</label><input id="b-suburbs" type="text" placeholder="Richmond, Hawthorn, Kew (comma-separated)" /></div>
-      <div class="form-row-2">
-        <div class="form-group"><label>Property type</label><select id="b-type"><option>Any</option><option>House</option><option>Apartment</option><option>Townhouse</option><option>Land</option></select></div>
-        <div class="form-group"><label>Pre-approved?</label><select id="b-preapproved"><option>Unknown</option><option>Yes</option><option>No</option></select></div>
+      <div class="form-group">
+        <label>Suburbs of interest</label>
+        <div class="suburb-chip-wrap" id="suburb-chip-wrap" onclick="el('b-suburb-input').focus()">
+          <input id="b-suburb-input" class="suburb-chip-input" type="text" placeholder="Type suburb, press Enter…" autocomplete="off" />
+        </div>
+        <input type="hidden" id="b-suburbs" />
       </div>
+      <div class="form-group"><label>Property type</label><select id="b-type"><option>Any</option><option>House</option><option>Apartment</option><option>Townhouse</option><option>Land</option></select></div>
+      <div class="form-group"><label>Box &amp; Dice profile link</label><input id="b-boxdice" type="url" placeholder="https://app.boxanddice.com.au/contacts/…" /></div>
       <div class="form-group"><label>Notes</label><textarea id="b-notes" rows="3" placeholder="Must-haves, lifestyle, motivation, timeline…"></textarea></div>
       <p id="buyer-err" class="form-err"></p>
       <div class="modal-actions">
