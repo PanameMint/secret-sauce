@@ -10,10 +10,11 @@
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
     import {
       getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged,
+      sendPasswordResetEmail, updatePassword,
     } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
     import {
       getFirestore, collection, addDoc, getDocs, deleteDoc, updateDoc,
-      doc, query, orderBy, serverTimestamp, arrayUnion,
+      doc, getDoc, query, orderBy, serverTimestamp, arrayUnion,
     } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -35,6 +36,7 @@
     const db   = getFirestore(app);
 
     let currentUser = null;
+    let currentUsername = "";
     let listings    = [];
     let buyers      = [];
     let activeTab   = "dashboard";
@@ -46,11 +48,25 @@
     onAuthStateChanged(auth, (user) => {
       currentUser = user;
       if (user) {
+        const isFirstLogin = user.metadata.creationTime === user.metadata.lastSignInTime;
+        if (isFirstLogin && !user.providerData.some(p => p.providerId === 'password' && user.metadata.creationTime !== user.metadata.lastSignInTime)) {
+          const needsSetPw = sessionStorage.getItem(`set_pw_${user.uid}`);
+          if (!needsSetPw) {
+            sessionStorage.setItem(`set_pw_${user.uid}`, "1");
+            _pendingSetPasswordUser = user;
+            hide("auth-screen"); hide("hero-screen"); hide("app-screen");
+            show("set-password-screen");
+            return;
+          }
+        }
+        hide("set-password-screen");
+        const userSnap = await getDoc(doc(db, "users", user.uid));
+        currentUsername = userSnap.exists() ? (userSnap.data().username || user.email) : user.email;
         show("app-screen"); hide("auth-screen"); hide("hero-screen");
-        el("user-name").textContent = user.displayName || user.email;
+        el("user-name").textContent = currentUsername;
         loadAll();
         const welcomeKey = `welcomed_${user.uid}`;
-        const name = user.displayName || user.email;
+        const name = currentUsername;
         if (!sessionStorage.getItem("session_welcomed")) {
           sessionStorage.setItem("session_welcomed", "1");
           el("welcome-name").textContent = name;
@@ -73,6 +89,8 @@
 
     window.closeWelcome = () => hideModal("modal-welcome");
 
+    let _pendingSetPasswordUser = null;
+
     window.handleLogin = async (e) => {
       e.preventDefault();
       setAuthErr("");
@@ -86,7 +104,44 @@
       }
     };
 
+    window.handleForgotPassword = async () => {
+      const email = val("login-email").trim();
+      if (!email) { setAuthErr("Enter your email above first."); return; }
+      setAuthErr("");
+      try {
+        await sendPasswordResetEmail(auth, email);
+        setAuthErr("✅ Reset link sent — check your inbox.");
+      } catch (err) {
+        setAuthErr(friendlyAuthErr(err.code));
+      }
+    };
+
+    window.handleSetPassword = async (e) => {
+      e.preventDefault();
+      setSetPwErr("");
+      const newPw  = val("set-password-new");
+      const confPw = val("set-password-confirm");
+      if (newPw.length < 6)        { setSetPwErr("Password must be at least 6 characters."); return; }
+      if (newPw !== confPw)         { setSetPwErr("Passwords don't match."); return; }
+      if (!_pendingSetPasswordUser) { setSetPwErr("Session expired — please log in again."); return; }
+      const btn = el("set-pw-btn");
+      btn.disabled = true; btn.textContent = "Saving…";
+      try {
+        await updatePassword(_pendingSetPasswordUser, newPw);
+        _pendingSetPasswordUser = null;
+        hide("set-password-screen");
+        show("app-screen");
+      } catch (err) {
+        setSetPwErr(err.code === "auth/requires-recent-login"
+          ? "Session expired — please log in again."
+          : "Failed to set password. Try again.");
+        btn.disabled = false; btn.textContent = "Set Password";
+      }
+    };
+
     window.handleLogout = () => signOut(auth);
+
+    function setSetPwErr(m) { el("set-pw-error").textContent = m; }
 
     function friendlyAuthErr(code) {
       return ({
@@ -241,11 +296,11 @@
         } else {
           const ref = await addDoc(collection(db,"listings"),{
             address,suburb,priceMin,priceMax,propertyType:propType,status,notes,beds,baths,cars,
-            addedByUid:currentUser.uid, addedByName:currentUser.displayName||currentUser.email,
+            addedByUid:currentUser.uid, addedByName:currentUsername,
             createdAt:serverTimestamp(),
           });
           listings.unshift({id:ref.id,address,suburb,priceMin,priceMax,propertyType:propType,status,notes,beds,baths,cars,
-            addedByUid:currentUser.uid,addedByName:currentUser.displayName||currentUser.email});
+            addedByUid:currentUser.uid,addedByName:currentUsername});
           toastMsg="Listing added!";
         }
         saved=true;
@@ -457,12 +512,12 @@
             propertyType:propType,phone,email,preApproved,boxdice,notes,
             isHot:false, underBidderHistory:[],
             addedByUid:currentUser.uid,
-            addedByName:currentUser.displayName||currentUser.email,
+            addedByName:currentUsername,
             createdAt:serverTimestamp(),
           });
           buyers.unshift({id:ref.id,name,budgetMin,budgetMax,suburbs,
             propertyType:propType,phone,email,preApproved,boxdice,notes,isHot:false,underBidderHistory:[],
-            addedByUid:currentUser.uid,addedByName:currentUser.displayName||currentUser.email});
+            addedByUid:currentUser.uid,addedByName:currentUsername});
           toastMsg="Buyer added!";
         }
         saved=true;
@@ -750,6 +805,17 @@
     .btn-primary:hover:not(:disabled) { background:var(--forest); }
     .btn-primary:disabled { opacity:.5; cursor:not-allowed; }
     .auth-error { color:var(--danger); font-size:.82rem; margin-bottom:.75rem; min-height:1.2em; }
+    .forgot-pw-link {
+      background: none; border: none; padding: 0; cursor: pointer;
+      font-size: .78rem; color: var(--accent); text-decoration: underline;
+      font-family: inherit;
+    }
+    .forgot-pw-link:hover { opacity: .75; }
+    #set-password-screen {
+      position: fixed; inset: 0; display: flex; align-items: center;
+      justify-content: center; background: var(--brand); z-index: 900;
+    }
+    #set-password-screen.hidden { display: none; }
     .auth-notice {
       margin-top:1.25rem; padding:.75rem 1rem;
       background:var(--accent-dim); border:1px solid var(--accent-bdr);
@@ -1208,12 +1274,37 @@
         <input id="login-email" type="email" placeholder="you@jelliscraig.com.au" required autocomplete="email" />
       </div>
       <div class="form-group">
-        <label>Password</label>
+        <label style="display:flex;justify-content:space-between;align-items:center;">
+          Password
+          <button type="button" class="forgot-pw-link" onclick="handleForgotPassword()">Forgot password?</button>
+        </label>
         <input id="login-password" type="password" placeholder="••••••••" required autocomplete="current-password" />
       </div>
       <button id="login-btn" class="btn-primary" type="submit">Log in</button>
     </form>
     <div class="auth-notice">🔒 Access is by invitation only. Contact your admin to get an account.</div>
+  </div>
+</div>
+
+<div id="set-password-screen" class="hidden">
+  <div class="auth-box">
+    <div class="auth-logo">
+      <div class="auth-eyebrow">First Login</div>
+      <h1>Secret <span>Sauce</span></h1>
+      <p>Choose a password to secure your account</p>
+    </div>
+    <p id="set-pw-error" class="auth-error"></p>
+    <form onsubmit="handleSetPassword(event)">
+      <div class="form-group">
+        <label>New Password</label>
+        <input id="set-password-new" type="password" placeholder="Min. 6 characters" required autocomplete="new-password" />
+      </div>
+      <div class="form-group">
+        <label>Confirm Password</label>
+        <input id="set-password-confirm" type="password" placeholder="Repeat password" required autocomplete="new-password" />
+      </div>
+      <button id="set-pw-btn" class="btn-primary" type="submit">Set Password</button>
+    </form>
   </div>
 </div>
 
