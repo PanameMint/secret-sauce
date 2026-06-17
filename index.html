@@ -1,0 +1,1416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Secret Sauce — Jellis Craig</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import {
+      getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged,
+    } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+    import {
+      getFirestore, collection, addDoc, getDocs, deleteDoc, updateDoc,
+      doc, query, orderBy, serverTimestamp, arrayUnion,
+    } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 🔧  PASTE YOUR FIREBASE CONFIG HERE
+    //     Firebase Console → Project Settings → Your apps → Config
+    // ─────────────────────────────────────────────────────────────────────────
+    const firebaseConfig = {
+      apiKey:            "AIzaSyAGQZHxBjYVzAj3lPQ3yk1zc-GaPJFRlTg",
+      authDomain:        "secret-sauce-e2ce2.firebaseapp.com",
+      projectId:         "secret-sauce-e2ce2",
+      storageBucket:     "secret-sauce-e2ce2.firebasestorage.app",
+      messagingSenderId: "358333751093",
+      appId:             "1:358333751093:web:361a9bccb66c80ffa7367c",
+    };
+    // ─────────────────────────────────────────────────────────────────────────
+
+    const app  = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db   = getFirestore(app);
+
+    let currentUser = null;
+    let listings    = [];
+    let buyers      = [];
+    let activeTab   = "dashboard";
+    let pendingUnderBidderId = null;
+    let editingListingId = null;
+    let editingBuyerId   = null;
+
+    // ── Auth ───────────────────────────────────────────────────────────────
+    onAuthStateChanged(auth, (user) => {
+      currentUser = user;
+      if (user) {
+        show("app-screen"); hide("auth-screen"); hide("hero-screen");
+        el("user-name").textContent = user.displayName || user.email;
+        loadAll();
+        const welcomeKey = `welcomed_${user.uid}`;
+        const name = user.displayName || user.email;
+        if (!sessionStorage.getItem("session_welcomed")) {
+          sessionStorage.setItem("session_welcomed", "1");
+          el("welcome-name").textContent = name;
+          if (!localStorage.getItem(welcomeKey)) {
+            localStorage.setItem(welcomeKey, "1");
+            el("welcome-heading").textContent = `Welcome, ${name}!`;
+            el("welcome-msg").textContent = "Just like the knights of old, your seat in this fellowship is equal and your presence is vital to our collective mission. Together, let's embark on this digital quest toward shared glory and immense riches!";
+            el("welcome-cta").textContent = "Let's go ⚔️";
+          } else {
+            el("welcome-heading").textContent = `Welcome back, ${name}!`;
+            el("welcome-msg").textContent = "Seize your fortune. What we do in life echoes in eternity.";
+            el("welcome-cta").textContent = "Let's go 💰";
+          }
+          setTimeout(() => showModal("modal-welcome"), 600);
+        }
+      } else {
+        show("hero-screen"); show("auth-screen"); hide("app-screen");
+      }
+    });
+
+    window.closeWelcome = () => hideModal("modal-welcome");
+
+    window.handleLogin = async (e) => {
+      e.preventDefault();
+      setAuthErr("");
+      const btn = el("login-btn");
+      btn.disabled = true; btn.textContent = "Logging in…";
+      try {
+        await signInWithEmailAndPassword(auth, val("login-email"), val("login-password"));
+      } catch (err) {
+        setAuthErr(friendlyAuthErr(err.code));
+        btn.disabled = false; btn.textContent = "Log in";
+      }
+    };
+
+    window.handleLogout = () => signOut(auth);
+
+    function friendlyAuthErr(code) {
+      return ({
+        "auth/user-not-found":    "No account found with that email.",
+        "auth/wrong-password":    "Incorrect password.",
+        "auth/invalid-email":     "Please enter a valid email address.",
+        "auth/too-many-requests": "Too many attempts — try again later.",
+        "auth/invalid-credential":"Incorrect email or password.",
+        "auth/user-disabled":     "Account disabled. Contact your admin.",
+      })[code] || "Login failed. Please try again.";
+    }
+
+    // ── Tabs ───────────────────────────────────────────────────────────────
+    window.switchTab = (tab) => {
+      activeTab = tab;
+      ["dashboard","listings","buyers"].forEach(t => {
+        el("tab-"+t).classList.toggle("tab-active", t === tab);
+        el("pane-"+t).classList.toggle("hidden",    t !== tab);
+      });
+      if (tab === "dashboard") renderDashboard();
+    };
+
+    // ── Load ───────────────────────────────────────────────────────────────
+    async function loadAll() {
+      await Promise.all([loadListings(), loadBuyers()]);
+    }
+    window.refreshAll = () => loadAll();
+
+    // ══════════════════════════════════════════════════════════════════════
+    // LISTINGS
+    // ══════════════════════════════════════════════════════════════════════
+    async function loadListings() {
+      el("listings-grid").innerHTML = spinner();
+      hide("empty-listings");
+      try {
+        const snap = await getDocs(query(collection(db,"listings"), orderBy("createdAt","desc")));
+        listings = snap.docs.map(d => ({ id:d.id, ...d.data() }));
+        renderListings();
+        if (activeTab === "dashboard") renderDashboard();
+      } catch(err) {
+        el("listings-grid").innerHTML = errMsg("Failed to load listings."); console.error(err);
+      }
+    }
+
+    function renderListings() {
+      const f = el("listing-filter").value.toLowerCase();
+      const s = el("listing-sort").value;
+      let rows = listings.filter(l =>
+        [l.address,l.suburb,l.priceMin,l.priceMax,l.propertyType].join(" ").toLowerCase().includes(f)
+      );
+      if (s==="price-asc")  rows.sort((a,b)=>parsePrice(a.priceMin)-parsePrice(b.priceMin));
+      if (s==="price-desc") rows.sort((a,b)=>parsePrice(b.priceMin)-parsePrice(a.priceMin));
+      if (s==="suburb")     rows.sort((a,b)=>(a.suburb||"").localeCompare(b.suburb||""));
+      el("listings-grid").innerHTML = "";
+      el("listings-count").textContent = `${rows.length} listing${rows.length!==1?"s":""}`;
+      if (!rows.length) { show("empty-listings"); return; }
+      hide("empty-listings");
+      rows.forEach(l => el("listings-grid").appendChild(buildListingCard(l, false)));
+    }
+
+    function buildListingCard(l, compact=false) {
+      const isOwner = currentUser?.uid === l.addedByUid;
+      const icon  = {House:"🏠",Apartment:"🏢",Townhouse:"🏘",Land:"🌿",Other:"📋"}[l.propertyType]||"📋";
+      const scls  = {"Off Market":"badge-offmarket","Pre-Market":"badge-premarket","Withdrawn":"badge-withdrawn"}[l.status]||"";
+      const hotBuyers = buyers.filter(b => b.isHot && buyerMatchesListing(b,l));
+      const matchChip = hotBuyers.length
+        ? `<button class="match-chip hot-chip" onclick="showBuyerMatches('${l.id}')">🔥 ${hotBuyers.length} hot buyer${hotBuyers.length>1?"s":""}</button>`
+        : (() => {
+            const all = buyers.filter(b => buyerMatchesListing(b,l));
+            return all.length ? `<button class="match-chip" onclick="showBuyerMatches('${l.id}')">👥 ${all.length} buyer match${all.length>1?"es":""}</button>` : "";
+          })();
+      const div = document.createElement("div");
+      div.className = "card listing-card" + (compact?" card-compact":"");
+      div.innerHTML = `
+        <div class="card-header">
+          <span class="card-type">${icon} ${l.propertyType||"Property"}</span>
+          ${l.status?`<span class="badge ${scls}">${l.status}</span>`:""}
+        </div>
+        <div class="card-address">${l.address}</div>
+        <div class="card-suburb">${l.suburb||""}</div>
+        <div class="card-price">${l.priceMin&&l.priceMax ? `${l.priceMin} – ${l.priceMax}` : l.priceMin||l.priceMax||"Price on request"}</div>
+        ${(l.beds||l.baths||l.cars)?`<div class="card-specs">${l.beds?`🛏 ${l.beds}`:""}${l.baths?` · 🚿 ${l.baths}`:""}${l.cars?` · 🚗 ${l.cars}`:""}</div>`:""}
+        ${(!compact&&l.notes)?`<div class="card-notes">${l.notes}</div>`:""}
+        ${matchChip}
+        <div class="card-footer">
+          <div class="card-agent"><span class="avatar">${initial(l.addedByName)}</span><span>${l.addedByName||"Unknown"}</span></div>
+          ${isOwner&&!compact?`<button class="btn-edit" onclick="openEditListing('${l.id}')">Edit</button>`:""}
+          ${isOwner&&!compact?`<button class="btn-delete" onclick="deleteListing('${l.id}')">Delete</button>`:""}
+        </div>`;
+      return div;
+    }
+
+    window.deleteListing = async (id) => {
+      if (!confirm("Delete this listing?")) return;
+      try {
+        await deleteDoc(doc(db,"listings",id));
+        listings = listings.filter(l=>l.id!==id);
+        renderListings(); renderDashboard(); toast("Listing deleted.");
+      } catch { toast("Error deleting listing.",true); }
+    };
+
+    window.openAddListing = () => {
+      editingListingId = null;
+      el("add-listing-form").reset();
+      clearErr("listing-err");
+      el("modal-listing-title").textContent = "Add off-market listing";
+      el("l-submit").textContent = "Add Listing";
+      showModal("modal-add-listing");
+    };
+
+    window.openEditListing = (id) => {
+      const l = listings.find(x => x.id === id);
+      if (!l) return;
+      editingListingId = id;
+      el("add-listing-form").reset();
+      clearErr("listing-err");
+      el("modal-listing-title").textContent = "Edit listing";
+      el("l-submit").textContent = "Save Changes";
+      el("l-address").value    = l.address  || "";
+      el("l-suburb").value     = l.suburb   || "";
+      el("l-price-min").value  = l.priceMin || "";
+      el("l-price-max").value  = l.priceMax || "";
+      el("l-type").value     = l.propertyType || "House";
+      el("l-status").value   = l.status   || "Off Market";
+      el("l-notes").value    = l.notes    || "";
+      el("l-beds").value     = l.beds     || "";
+      el("l-baths").value    = l.baths    || "";
+      el("l-cars").value     = l.cars     || "";
+      showModal("modal-add-listing");
+    };
+
+    window.closeAddListing = () => { hideModal("modal-add-listing"); editingListingId = null; };
+
+    window.submitListing = async (e) => {
+      e.preventDefault(); clearErr("listing-err");
+      const address=val("l-address"), suburb=val("l-suburb"),
+            priceMin=val("l-price-min"), priceMax=val("l-price-max"),
+            propType=val("l-type"), status=val("l-status"), notes=val("l-notes"),
+            beds=val("l-beds"), baths=val("l-baths"), cars=val("l-cars");
+      if (!address||!suburb) { setErr("listing-err","Address and suburb are required."); return; }
+      const btn=el("l-submit"); btn.disabled=true;
+      btn.textContent = editingListingId ? "Saving…" : "Adding…";
+      let saved=false, toastMsg="";
+      try {
+        if (editingListingId) {
+          await updateDoc(doc(db,"listings",editingListingId),{
+            address,suburb,priceMin,priceMax,propertyType:propType,status,notes,beds,baths,cars,
+          });
+          const idx = listings.findIndex(l=>l.id===editingListingId);
+          if (idx>-1) Object.assign(listings[idx],{address,suburb,priceMin,priceMax,propertyType:propType,status,notes,beds,baths,cars});
+          toastMsg="Listing updated!";
+        } else {
+          const ref = await addDoc(collection(db,"listings"),{
+            address,suburb,priceMin,priceMax,propertyType:propType,status,notes,beds,baths,cars,
+            addedByUid:currentUser.uid, addedByName:currentUser.displayName||currentUser.email,
+            createdAt:serverTimestamp(),
+          });
+          listings.unshift({id:ref.id,address,suburb,priceMin,priceMax,propertyType:propType,status,notes,beds,baths,cars,
+            addedByUid:currentUser.uid,addedByName:currentUser.displayName||currentUser.email});
+          toastMsg="Listing added!";
+        }
+        saved=true;
+      } catch(err) { setErr("listing-err","Failed to save. Please try again."); console.error(err); }
+      finally { btn.disabled=false; btn.textContent = editingListingId?"Save Changes":"Add Listing"; }
+      if (saved) { hideModal("modal-add-listing"); editingListingId=null; renderListings(); renderDashboard(); toast(toastMsg); }
+    };
+
+    // ══════════════════════════════════════════════════════════════════════
+    // BUYERS
+    // ══════════════════════════════════════════════════════════════════════
+    async function loadBuyers() {
+      el("buyers-grid").innerHTML = spinner();
+      hide("empty-buyers");
+      try {
+        const snap = await getDocs(query(collection(db,"buyers"), orderBy("createdAt","desc")));
+        buyers = snap.docs.map(d => ({ id:d.id, ...d.data() }));
+        renderBuyers(); renderListings();
+        if (activeTab==="dashboard") renderDashboard();
+      } catch(err) {
+        el("buyers-grid").innerHTML = errMsg("Failed to load buyers."); console.error(err);
+      }
+    }
+
+    function renderBuyers() {
+      const f = el("buyer-filter").value.toLowerCase();
+      let rows = buyers.filter(b =>
+        [b.name,b.email,b.phone,b.suburbs,b.propertyType,b.notes].join(" ").toLowerCase().includes(f)
+      );
+      el("buyers-count").textContent = `${rows.length} buyer${rows.length!==1?"s":""}`;
+      el("buyers-grid").innerHTML = "";
+      if (!rows.length) { show("empty-buyers"); return; }
+      hide("empty-buyers");
+      rows.forEach(b => el("buyers-grid").appendChild(buildBuyerCard(b, false)));
+    }
+
+    function buildBuyerCard(b, compact=false) {
+      const isOwner   = currentUser?.uid === b.addedByUid;
+      const isHot     = !!b.isHot;
+      const history   = b.underBidderHistory || [];
+      const latestMiss = history[history.length-1];
+      const allMatched = listings.filter(l => buyerMatchesListing(b,l));
+      const hotMatchChip = allMatched.length
+        ? `<button class="match-chip" onclick="showListingMatches('${b.id}')">🏠 ${allMatched.length} listing match${allMatched.length>1?"es":""}</button>`
+        : "";
+
+      const missBadge = latestMiss
+        ? `<div class="underbidder-badge">🔴 Under bidder: ${latestMiss.address} at ${latestMiss.price}</div>`
+        : "";
+
+      const historyHtml = (!compact && history.length > 1)
+        ? `<div class="ub-history-wrap">
+            ${history.slice().reverse().slice(1).map(h=>`<div class="ub-history-item">🔴 ${h.address} at ${h.price} <span class="ub-date">${h.date}</span></div>`).join("")}
+           </div>`
+        : "";
+
+      const div = document.createElement("div");
+      div.className = "card buyer-card" + (isHot?" buyer-hot":"") + (compact?" card-compact":"");
+      div.innerHTML = `
+        <div class="card-header">
+          <span class="buyer-type">${b.propertyType||"Any type"}</span>
+          <div style="display:flex;gap:.4rem;align-items:center">
+            ${b.preApproved==="Yes"?'<span class="badge badge-available">Pre-approved</span>':""}
+            ${isHot?'<span class="badge badge-hot">🔥 Hot</span>':""}
+          </div>
+        </div>
+        <div class="card-address">${b.name}</div>
+        ${!compact&&b.boxdice?`<div class="buyer-contact"><a href="${b.boxdice}" target="_blank" rel="noopener" class="bd-link">📋 Box &amp; Dice profile ↗</a></div>`:""}
+        <div class="buyer-row"><span class="buyer-label">Budget</span><span>${b.budgetMin||"?"} – ${b.budgetMax||"?"}</span></div>
+        <div class="buyer-row"><span class="buyer-label">Suburbs</span><span>${b.suburbs||"Flexible"}</span></div>
+        ${!compact&&b.notes?`<div class="card-notes">${b.notes}</div>`:""}
+        ${missBadge}
+        ${historyHtml}
+        ${!compact?hotMatchChip:""}
+        <div class="card-footer" style="flex-wrap:wrap;gap:.4rem">
+          <div class="card-agent"><span class="avatar">${initial(b.addedByName)}</span><span>${b.addedByName||"Unknown"}</span></div>
+          <div style="display:flex;gap:.4rem;flex-wrap:wrap">
+            <button class="btn-hot ${isHot?"btn-hot-on":""}" onclick="toggleHot('${b.id}')">
+              ${isHot?"🔥 Hot":"☆ Mark Hot"}
+            </button>
+            <button class="btn-underbidder" onclick="openUnderBidder('${b.id}')">🔴 Under Bidder</button>
+            ${isOwner&&!compact?`<button class="btn-edit" onclick="openEditBuyer('${b.id}')">Edit</button>`:""}
+            ${isOwner&&!compact?`<button class="btn-delete" onclick="deleteBuyer('${b.id}')">Delete</button>`:""}
+          </div>
+        </div>`;
+      return div;
+    }
+
+    // ── Hot toggle ─────────────────────────────────────────────────────────
+    window.toggleHot = async (id) => {
+      const buyer = buyers.find(b=>b.id===id);
+      if (!buyer) return;
+      const newHot = !buyer.isHot;
+      try {
+        await updateDoc(doc(db,"buyers",id), { isHot: newHot });
+        buyer.isHot = newHot;
+        renderBuyers(); renderDashboard(); renderListings();
+        toast(newHot ? "Marked as 🔥 Hot buyer!" : "Removed hot status.");
+      } catch(err) { toast("Failed to update.",true); console.error(err); }
+    };
+
+    // ── Under bidder ───────────────────────────────────────────────────────
+    window.openUnderBidder = (id) => {
+      pendingUnderBidderId = id;
+      el("ub-form").reset();
+      clearErr("ub-err");
+      showModal("modal-underbidder");
+      el("ub-address").focus();
+    };
+    window.closeUnderBidder = () => hideModal("modal-underbidder");
+
+    window.submitUnderBidder = async (e) => {
+      e.preventDefault(); clearErr("ub-err");
+      const address = val("ub-address");
+      const price   = val("ub-price");
+      if (!address||!price) { setErr("ub-err","Both fields are required."); return; }
+      const btn = el("ub-submit"); btn.disabled=true; btn.textContent="Saving…";
+      const entry = {
+        address,
+        price,
+        date: new Date().toLocaleDateString("en-AU", {day:"numeric",month:"short",year:"numeric"}),
+      };
+      try {
+        await updateDoc(doc(db,"buyers",pendingUnderBidderId), {
+          underBidderHistory: arrayUnion(entry),
+          isHot: true, // automatically mark hot when they miss out
+        });
+        const buyer = buyers.find(b=>b.id===pendingUnderBidderId);
+        if (buyer) {
+          buyer.underBidderHistory = [...(buyer.underBidderHistory||[]), entry];
+          buyer.isHot = true;
+        }
+        hideModal("modal-underbidder");
+        renderBuyers(); renderDashboard(); renderListings();
+        toast("Under bidder recorded — buyer marked 🔥 Hot!");
+      } catch(err) { setErr("ub-err","Failed to save. Please try again."); console.error(err); }
+      finally { btn.disabled=false; btn.textContent="Save"; }
+    };
+
+    // ── Delete buyer ───────────────────────────────────────────────────────
+    window.deleteBuyer = async (id) => {
+      if (!confirm("Delete this buyer?")) return;
+      try {
+        await deleteDoc(doc(db,"buyers",id));
+        buyers = buyers.filter(b=>b.id!==id);
+        renderBuyers(); renderDashboard(); renderListings();
+        toast("Buyer deleted.");
+      } catch { toast("Error deleting buyer.",true); }
+    };
+
+    window.openAddBuyer = () => {
+      editingBuyerId = null;
+      el("add-buyer-form").reset();
+      clearErr("buyer-err");
+      suburbChips = [];
+      setTimeout(renderSuburbChips, 0);
+      el("modal-buyer-title").textContent = "Add buyer";
+      el("b-submit").textContent = "Add Buyer";
+      showModal("modal-add-buyer");
+    };
+
+    window.openEditBuyer = (id) => {
+      const b = buyers.find(x => x.id === id);
+      if (!b) return;
+      editingBuyerId = id;
+      el("add-buyer-form").reset();
+      clearErr("buyer-err");
+      el("modal-buyer-title").textContent = "Edit buyer";
+      el("b-submit").textContent = "Save Changes";
+      el("b-name").value       = b.name       || "";
+      el("b-budget-min").value = b.budgetMin  || "";
+      el("b-budget-max").value = b.budgetMax  || "";
+      el("b-type").value       = b.propertyType || "Any";
+      el("b-boxdice").value    = b.boxdice    || "";
+      el("b-notes").value      = b.notes      || "";
+      suburbChips = b.suburbs ? b.suburbs.split(", ").filter(Boolean) : [];
+      setTimeout(renderSuburbChips, 0);
+      showModal("modal-add-buyer");
+    };
+
+    window.closeAddBuyer = () => { hideModal("modal-add-buyer"); editingBuyerId = null; };
+
+    window.submitBuyer = async (e) => {
+      e.preventDefault(); clearErr("buyer-err");
+      const name=val("b-name"),
+            budgetMin=val("b-budget-min"), budgetMax=val("b-budget-max"),
+            suburbs=val("b-suburbs"), propType=val("b-type"),
+            boxdice=val("b-boxdice"), notes=val("b-notes");
+      if (!name) { setErr("buyer-err","Buyer name is required."); return; }
+      const btn=el("b-submit"); btn.disabled=true;
+      btn.textContent = editingBuyerId ? "Saving…" : "Adding…";
+      let saved=false, toastMsg="";
+      try {
+        if (editingBuyerId) {
+          await updateDoc(doc(db,"buyers",editingBuyerId),{
+            name,budgetMin,budgetMax,suburbs,propertyType:propType,boxdice,notes,
+          });
+          const idx = buyers.findIndex(b=>b.id===editingBuyerId);
+          if (idx>-1) Object.assign(buyers[idx],{name,budgetMin,budgetMax,suburbs,propertyType:propType,boxdice,notes});
+          toastMsg="Buyer updated!";
+        } else {
+          const ref = await addDoc(collection(db,"buyers"),{
+            name,budgetMin,budgetMax,suburbs,
+            propertyType:propType,boxdice,notes,
+            isHot:false, underBidderHistory:[],
+            addedByUid:currentUser.uid,
+            addedByName:currentUser.displayName||currentUser.email,
+            createdAt:serverTimestamp(),
+          });
+          buyers.unshift({id:ref.id,name,budgetMin,budgetMax,suburbs,
+            propertyType:propType,boxdice,notes,isHot:false,underBidderHistory:[],
+            addedByUid:currentUser.uid,addedByName:currentUser.displayName||currentUser.email});
+          toastMsg="Buyer added!";
+        }
+        saved=true;
+      } catch(err) { setErr("buyer-err","Failed to save. Please try again."); console.error(err); }
+      finally { btn.disabled=false; btn.textContent = editingBuyerId?"Save Changes":"Add Buyer"; }
+      if (saved) { hideModal("modal-add-buyer"); editingBuyerId=null; renderBuyers(); renderDashboard(); renderListings(); toast(toastMsg); }
+    };
+
+    // ══════════════════════════════════════════════════════════════════════
+    // DASHBOARD
+    // ══════════════════════════════════════════════════════════════════════
+    function countMatches() {
+      let count = 0;
+      for (const b of buyers) {
+        for (const l of listings) {
+          if (l.status === "Withdrawn") continue;
+          const suburbMatch = !b.suburbs || !l.suburb ||
+            b.suburbs.toLowerCase().split(/[,;\s]+/).some(s => s && l.suburb.toLowerCase().includes(s));
+          const listPrice  = parsePrice(l.priceMin || l.priceMax);
+          const maxBudget  = parsePrice(b.budgetMax);
+          const priceMatch = !listPrice || !maxBudget || listPrice <= maxBudget * 1.1;
+          if (suburbMatch && priceMatch) count++;
+        }
+      }
+      return count;
+    }
+
+    function renderDashboard() {
+      const hotBuyers     = buyers.filter(b => b.isHot);
+      const activeListing = listings.filter(l => l.status !== "Withdrawn");
+      const underbidders  = buyers.filter(b => b.underBidderHistory?.length);
+
+      // Stats bar
+      el("stat-hot").textContent       = hotBuyers.length;
+      el("stat-available").textContent = activeListing.length;
+      el("stat-matches").textContent   = countMatches();
+
+      // All listings
+      const alGrid = el("dash-listings");
+      alGrid.innerHTML = "";
+      if (listings.length) { hide("empty-avail"); listings.forEach(l => alGrid.appendChild(buildListingCard(l, false))); }
+      else { show("empty-avail"); }
+
+      // All buyers
+      const hbGrid = el("dash-hot-buyers");
+      hbGrid.innerHTML = "";
+      if (buyers.length) { hide("empty-hot"); buyers.forEach(b => hbGrid.appendChild(buildBuyerCard(b, false))); }
+      else { show("empty-hot"); }
+
+      // Underbidders
+      const ubGrid = el("dash-underbidders");
+      ubGrid.innerHTML = "";
+      if (underbidders.length) { hide("empty-ub"); underbidders.forEach(b => ubGrid.appendChild(buildBuyerCard(b, false))); }
+      else { show("empty-ub"); }
+    }
+
+    // ── Matching ───────────────────────────────────────────────────────────
+    function buyerMatchesListing(b, l) {
+      const suburbMatch = !b.suburbs||!l.suburb||
+        b.suburbs.toLowerCase().split(/[,;\s]+/).some(s=>s&&l.suburb.toLowerCase().includes(s));
+      const typeMatch   = !b.propertyType||b.propertyType==="Any"||
+        b.propertyType?.toLowerCase()===l.propertyType?.toLowerCase();
+      const maxBudget   = parsePrice(b.budgetMax);
+      const listPrice   = parsePrice(l.priceMin || l.priceMax);
+      const budgetMatch = !listPrice||!maxBudget||listPrice<=maxBudget*1.1;
+      const statusMatch = !l.status||l.status==="Available";
+      return suburbMatch&&typeMatch&&budgetMatch&&statusMatch;
+    }
+
+    window.showBuyerMatches = (listingId) => {
+      const listing = listings.find(l=>l.id===listingId);
+      if (!listing) return;
+      const matched = buyers.filter(b=>buyerMatchesListing(b,listing));
+      el("match-modal-title").textContent = `Buyers for ${listing.address}`;
+      el("match-modal-body").innerHTML = matched.length
+        ? matched.map(b=>`<div class="match-row">
+            <div class="match-name">${b.isHot?'🔥 ':''}<strong>${b.name}</strong></div>
+            <div class="match-detail">${b.phone?`📞 ${b.phone}`:""} ${b.email?`✉️ ${b.email}`:""}</div>
+            <div class="match-detail">Budget: ${b.budgetMin||"?"} – ${b.budgetMax||"?"} · ${b.suburbs||"Flexible"}</div>
+            ${b.underBidderHistory?.length?`<div class="match-detail" style="color:#dc2626">🔴 Last missed: ${b.underBidderHistory[b.underBidderHistory.length-1].address} at ${b.underBidderHistory[b.underBidderHistory.length-1].price}</div>`:""}
+            <div class="match-agent">Added by ${b.addedByName||"Unknown"}</div>
+          </div>`).join("")
+        : "<p style='color:var(--muted);padding:1rem 0'>No matching buyers found.</p>";
+      showModal("modal-matches");
+    };
+
+    window.showListingMatches = (buyerId) => {
+      const buyer = buyers.find(b=>b.id===buyerId);
+      if (!buyer) return;
+      const matched = listings.filter(l=>buyerMatchesListing(buyer,l));
+      el("match-modal-title").textContent = `Listings for ${buyer.name}`;
+      el("match-modal-body").innerHTML = matched.length
+        ? matched.map(l=>`<div class="match-row">
+            <div class="match-name">${l.address}, ${l.suburb||""}</div>
+            <div class="match-detail">${l.propertyType||""} · ${l.price||"Price on request"}</div>
+            <div class="match-agent">Added by ${l.addedByName||"Unknown"}</div>
+          </div>`).join("")
+        : "<p style='color:var(--muted);padding:1rem 0'>No matching listings found.</p>";
+      showModal("modal-matches");
+    };
+
+    window.closeMatches = () => hideModal("modal-matches");
+
+    // ── Filter/sort events ─────────────────────────────────────────────────
+    window.onListingFilter = () => renderListings();
+    window.onListingSort   = () => renderListings();
+    window.onBuyerFilter   = () => renderBuyers();
+
+    // ── Utilities ──────────────────────────────────────────────────────────
+    function el(id)         { return document.getElementById(id); }
+    function val(id)        { return el(id).value.trim(); }
+    function show(id)       { el(id).classList.remove("hidden"); }
+    function hide(id)       { el(id).classList.add("hidden"); }
+    function setErr(id,m)   { el(id).textContent=m; }
+    function clearErr(id)   { el(id).textContent=""; }
+    function setAuthErr(m)  { el("auth-error").textContent=m; }
+    function initial(n)     { return (n||"?")[0].toUpperCase(); }
+    function parsePrice(s)  { return parseInt((s||"").replace(/[^0-9]/g,""))||0; }
+    function spinner()      { return '<div class="spinner"></div>'; }
+    function errMsg(m)      { return `<p class="grid-err">${m}</p>`; }
+    function showModal(id)  { show(id); document.body.style.overflow="hidden"; }
+    function hideModal(id)  { hide(id); document.body.style.overflow=""; }
+
+    document.addEventListener("click", e => {
+      ["modal-add-listing","modal-add-buyer","modal-matches","modal-underbidder"]
+        .forEach(id => { if (e.target.id===id) hideModal(id); });
+    });
+
+    // ── Suburb chip input ──────────────────────────────────────────────────
+    let suburbChips = [];
+
+    function renderSuburbChips() {
+      const wrap = el("suburb-chip-wrap");
+      const input = el("b-suburb-input");
+      // remove old chips
+      wrap.querySelectorAll(".suburb-chip").forEach(c => c.remove());
+      suburbChips.forEach((s, i) => {
+        const chip = document.createElement("span");
+        chip.className = "suburb-chip";
+        chip.innerHTML = `${s}<button class="suburb-chip-x" type="button" onclick="removeSuburbChip(${i})">✕</button>`;
+        wrap.insertBefore(chip, input);
+      });
+      el("b-suburbs").value = suburbChips.join(", ");
+    }
+
+    window.removeSuburbChip = (i) => {
+      suburbChips.splice(i, 1);
+      renderSuburbChips();
+    };
+
+    window.addEventListener("load", () => {
+      const input = el("b-suburb-input");
+      if (!input) return;
+      input.addEventListener("keydown", e => {
+        if (e.key === "Enter" || e.key === "," || e.key === "Tab") {
+          e.preventDefault();
+          const v = input.value.trim().replace(/,$/, "");
+          if (v && !suburbChips.includes(v)) {
+            suburbChips.push(v);
+            renderSuburbChips();
+          }
+          input.value = "";
+        } else if (e.key === "Backspace" && !input.value && suburbChips.length) {
+          suburbChips.pop();
+          renderSuburbChips();
+        }
+      });
+    });
+
+
+    function toast(msg, isError=false) {
+      const t=el("toast");
+      t.textContent=msg;
+      t.className="toast show"+(isError?" toast-error":"");
+      setTimeout(()=>t.classList.remove("show"),3000);
+    }
+  </script>
+
+  <!-- ── Google Maps Places API ──────────────────────────────────────────── -->
+
+  <script>
+    window.mapsReady = function() {
+      try {
+        const af = document.getElementById("l-address");
+        if (!af || !window.google?.maps?.places) return;
+        const ac = new google.maps.places.Autocomplete(af, {
+          componentRestrictions: { country: ["au"] },
+          fields: ["address_components", "formatted_address"],
+          types: ["address"],
+        });
+        ac.addListener("place_changed", () => {
+          try {
+            const place = ac.getPlace();
+            if (!place.address_components) return;
+            let num = "", route = "", suburb = "", state = "", postcode = "";
+            for (const c of place.address_components) {
+              if (c.types[0] === "street_number") num = c.long_name;
+              if (c.types[0] === "route")                  route    = c.short_name;
+              if (c.types[0] === "locality")               suburb   = c.long_name;
+              if (c.types[0] === "administrative_area_level_1") state = c.short_name;
+              if (c.types[0] === "postal_code")            postcode = c.long_name;
+            }
+            af.value = [num, route].filter(Boolean).join(" ");
+            const sf = document.getElementById("l-suburb");
+            if (sf) sf.value = [suburb, state, postcode].filter(Boolean).join(" ");
+          } catch(e) { console.warn("Place parse error:", e); }
+        });
+        window._acInit = ac;
+      } catch(e) { console.warn("Maps autocomplete init failed:", e); }
+    };
+  </script>
+  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDbddkDT76iAf2ShHrWbNdhmmwf-4OMeb8&libraries=places&v=weekly&callback=mapsReady" async defer></script>
+
+  <style>
+    *, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
+    :root {
+      --brand:       #0F1A10;
+      --forest:      #2A3D2C;
+      --accent:      #D4A853;
+      --accent-dim:  rgba(212,168,83,0.10);
+      --accent-bdr:  rgba(212,168,83,0.28);
+      --hot:         #D4A853;
+      --hot-bg:      rgba(212,168,83,0.08);
+      --hot-border:  rgba(212,168,83,0.35);
+      --bg:          #F2EDE4;
+      --bg-dark:     #EDE8DE;
+      --surface:     #F7F3EC;
+      --border:      rgba(0,0,0,0.08);
+      --text:        #0F1A10;
+      --muted:       #6B8070;
+      --success:     #2FB98A;
+      --danger:      #D45050;
+      --radius:      4px;
+      --shadow:      0 2px 12px rgba(15,26,16,0.07);
+      --listing-color: #1A5C3A;
+      --listing-bg:    rgba(26,92,58,0.04);
+      --listing-bdr:   rgba(26,92,58,0.28);
+      --buyer-color:   #2563A8;
+      --buyer-bg:      rgba(37,99,168,0.04);
+      --buyer-bdr:     rgba(37,99,168,0.25);
+    }
+    body { font-family:'Inter',sans-serif; background:var(--bg); color:var(--text); min-height:100vh; font-size:14px; line-height:1.75; }
+    .hidden { display:none !important; }
+    a { color:var(--forest); }
+
+    /* ── Auth ──────────────────────────────────────────────────────────────── */
+    #auth-screen {
+      min-height:100vh; display:flex; align-items:center; justify-content:center;
+      padding:1rem; background:var(--brand); position:relative; overflow:hidden;
+    }
+    #auth-screen::before {
+      content:''; position:absolute; top:50%; left:50%;
+      transform:translate(-50%,-50%);
+      width:700px; height:700px;
+      background:radial-gradient(ellipse,rgba(212,168,83,0.08) 0%,transparent 65%);
+      pointer-events:none;
+    }
+    .auth-box {
+      background:var(--surface); border-radius:var(--radius); padding:2.25rem;
+      width:100%; max-width:400px; box-shadow:0 20px 60px rgba(0,0,0,.35);
+      border:1px solid var(--accent-bdr); position:relative; z-index:1;
+    }
+    .auth-logo { text-align:center; margin-bottom:2rem; }
+    .auth-eyebrow {
+      font-size:10px; font-weight:600; letter-spacing:0.24em; text-transform:uppercase;
+      color:var(--accent); margin-bottom:.5rem;
+    }
+    .auth-logo h1 {
+      font-size:1.75rem; color:var(--brand); font-weight:900;
+      text-transform:uppercase; letter-spacing:-0.03em; line-height:1;
+    }
+    .auth-logo h1 span { color:var(--accent); }
+    .auth-logo p { color:var(--muted); font-size:.82rem; margin-top:.4rem; }
+    .form-group { margin-bottom:1rem; }
+    .form-group label {
+      display:block; font-size:9px; font-weight:700; color:var(--muted);
+      text-transform:uppercase; letter-spacing:0.2em; margin-bottom:.4rem;
+    }
+    .form-group input,.form-group select,.form-group textarea {
+      width:100%; padding:.65rem .85rem; border:1.5px solid var(--border);
+      border-radius:7px; font-size:.9rem; color:var(--text); background:var(--bg);
+      outline:none; transition:border-color .15s; font-family:'Inter',sans-serif;
+    }
+    .form-group input:focus,.form-group select:focus,.form-group textarea:focus {
+      border-color:var(--accent);
+    }
+    .btn-primary {
+      width:100%; padding:.75rem; background:var(--brand); color:var(--bg);
+      border:none; border-radius:7px; font-size:.85rem; font-weight:700;
+      cursor:pointer; transition:background .15s; font-family:'Inter',sans-serif;
+      letter-spacing:0.08em; text-transform:uppercase;
+    }
+    .btn-primary:hover:not(:disabled) { background:var(--forest); }
+    .btn-primary:disabled { opacity:.5; cursor:not-allowed; }
+    .auth-error { color:var(--danger); font-size:.82rem; margin-bottom:.75rem; min-height:1.2em; }
+    .auth-notice {
+      margin-top:1.25rem; padding:.75rem 1rem;
+      background:var(--accent-dim); border:1px solid var(--accent-bdr);
+      border-radius:7px; font-size:.78rem; color:var(--forest); line-height:1.6;
+    }
+    .auth-lock { font-size:2.5rem; margin-bottom:.5rem; }
+
+    /* ── App shell ─────────────────────────────────────────────────────────── */
+    #app-screen { min-height:100vh; display:flex; flex-direction:column; }
+
+    /* ── Navbar ────────────────────────────────────────────────────────────── */
+    .navbar {
+      background:var(--brand); color:var(--bg); height:62px; padding:0 1.5rem;
+      display:flex; align-items:center; justify-content:space-between;
+      position:sticky; top:0; z-index:100; box-shadow:0 2px 12px rgba(0,0,0,.2);
+    }
+    .navbar-brand {
+      font-size:1rem; font-weight:900; text-transform:uppercase;
+      letter-spacing:0.06em; color:var(--bg);
+    }
+    .navbar-brand span { color:var(--accent); }
+    .navbar-right { display:flex; align-items:center; gap:.75rem; }
+    .navbar-user { font-size:.78rem; opacity:.65; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .btn-logout {
+      background:rgba(242,237,228,.1); color:var(--bg);
+      border:1px solid rgba(242,237,228,.2); padding:.35rem .8rem;
+      border-radius:5px; font-size:.72rem; cursor:pointer; font-family:'Inter',sans-serif;
+      font-weight:600; letter-spacing:0.05em; text-transform:uppercase;
+    }
+    .btn-logout:hover { background:rgba(242,237,228,.18); }
+
+    /* ── Tab bar ───────────────────────────────────────────────────────────── */
+    .tab-bar {
+      background:var(--surface); border-bottom:1px solid var(--border);
+      display:flex; padding:0 1.5rem;
+    }
+    .tab-nav-btn {
+      padding:.8rem 1.25rem; background:none; border:none; font-size:.75rem;
+      font-weight:600; color:var(--muted); cursor:pointer;
+      border-bottom:2px solid transparent; margin-bottom:-1px;
+      transition:color .15s; white-space:nowrap; font-family:'Inter',sans-serif;
+      text-transform:uppercase; letter-spacing:0.1em;
+    }
+    .tab-nav-btn.tab-active { color:var(--brand); border-bottom-color:var(--accent); }
+
+    /* ── Panes ─────────────────────────────────────────────────────────────── */
+    .pane { padding:1.5rem; max-width:1400px; margin:0 auto; width:100%; }
+
+    /* ── Dashboard stats ───────────────────────────────────────────────────── */
+    .stats-bar { display:grid; grid-template-columns:repeat(3,1fr); gap:.75rem; margin-bottom:1.75rem; }
+    .stat-card {
+      background:var(--surface); border-radius:var(--radius); padding:1.1rem 1.25rem;
+      box-shadow:var(--shadow); border:1px solid var(--border); text-align:center;
+      position:relative; overflow:hidden;
+    }
+    .stat-card::before { content:''; position:absolute; top:0; left:0; right:0; height:2px; }
+    .stat-hot::before,.stat-total-b::before { background:var(--accent); }
+    .stat-avail::before { background:var(--success); }
+    .stat-total-l::before { background:var(--forest); }
+    .stat-num {
+      font-size:2.2rem; font-weight:900; color:var(--brand); line-height:1;
+      font-family:'JetBrains Mono',monospace;
+    }
+    .stat-hot .stat-num { color:var(--accent); }
+    .stat-avail .stat-num { color:var(--success); }
+    .stat-label {
+      font-size:9px; color:var(--muted); font-weight:700; text-transform:uppercase;
+      letter-spacing:0.18em; margin-top:.35rem;
+    }
+
+    /* ── Dashboard layout ──────────────────────────────────────────────────── */
+    .dash-columns { display:grid; grid-template-columns:1fr 1fr; gap:1.5rem; align-items:start; }
+    .dash-section-title {
+      font-size:9px; font-weight:700; letter-spacing:0.22em; text-transform:uppercase;
+      color:var(--accent); margin-bottom:.85rem;
+      display:flex; align-items:center; gap:10px;
+    }
+    .dash-section-title::before {
+      content:''; width:3px; height:13px; background:var(--accent);
+      border-radius:2px; flex-shrink:0;
+    }
+    .dash-section-title .pill {
+      background:var(--accent); color:var(--brand); border-radius:999px;
+      padding:.15rem .6rem; font-size:9px; font-weight:900;
+    }
+
+    /* ── Toolbar ───────────────────────────────────────────────────────────── */
+    .toolbar { display:flex; flex-wrap:wrap; gap:.75rem; margin-bottom:.75rem; align-items:center; }
+    .toolbar-search {
+      flex:1; min-width:200px; padding:.6rem .9rem; border:1.5px solid var(--border);
+      border-radius:7px; font-size:.85rem; background:var(--surface); outline:none;
+      transition:border-color .15s; font-family:'Inter',sans-serif; color:var(--text);
+    }
+    .toolbar-search:focus { border-color:var(--accent); }
+    .toolbar-sort {
+      padding:.6rem .9rem; border:1.5px solid var(--border); border-radius:7px;
+      font-size:.85rem; background:var(--surface); cursor:pointer; color:var(--text);
+      font-family:'Inter',sans-serif;
+    }
+    .count-row {
+      font-size:9px; color:var(--muted); margin-bottom:.85rem;
+      font-weight:700; text-transform:uppercase; letter-spacing:0.15em;
+    }
+    .btn-add {
+      background:var(--accent); color:var(--brand); border:none; padding:.6rem 1.15rem;
+      border-radius:7px; font-size:.75rem; font-weight:700; cursor:pointer;
+      white-space:nowrap; transition:background .15s; font-family:'Inter',sans-serif;
+      text-transform:uppercase; letter-spacing:0.08em;
+    }
+    .btn-add:hover { background:#c49640; }
+    .btn-refresh {
+      background:transparent; border:1.5px solid var(--border); color:var(--muted);
+      padding:.6rem .75rem; border-radius:7px; cursor:pointer; font-size:1rem;
+    }
+    .btn-refresh:hover { border-color:var(--accent); color:var(--accent); }
+
+    /* ── Grids ─────────────────────────────────────────────────────────────── */
+    .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(285px,1fr)); gap:1rem; }
+    .dash-grid { display:flex; flex-direction:column; gap:.75rem; }
+
+    /* ── Cards ─────────────────────────────────────────────────────────────── */
+    .card {
+      background:var(--surface); border-radius:var(--radius); padding:1.2rem;
+      box-shadow:var(--shadow); border:1px solid var(--border);
+      display:flex; flex-direction:column; gap:.45rem;
+      transition:box-shadow .2s,transform .2s; position:relative; overflow:hidden;
+    }
+    .card::before {
+      content:''; position:absolute; top:0; left:0; right:0; height:3px;
+      background:var(--border);
+    }
+    .card:hover { box-shadow:0 6px 24px rgba(15,26,16,0.12); transform:translateY(-2px); }
+    .card-compact { padding:.9rem 1rem; }
+
+    /* Listing cards — green */
+    .listing-card { background:#F5FBF7; border-color:var(--listing-bdr); }
+    .listing-card::before { background:var(--listing-bdr); }
+    .listing-card:hover::before { background:var(--listing-color); }
+    .listing-card .card-price { color:var(--listing-color); }
+
+    /* Buyer cards — blue */
+    .buyer-card { background:#F4F8FD; border-color:var(--buyer-bdr); }
+    .buyer-card::before { background:var(--buyer-bdr); }
+    .buyer-card:hover::before { background:var(--buyer-color); }
+
+    /* Hot buyer override */
+    .buyer-hot { border-color:var(--hot-border); background:var(--hot-bg); }
+    .buyer-hot::before { background:var(--accent) !important; }
+    .card-header { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:.3rem; }
+    .card-type,.buyer-type {
+      font-size:9px; color:var(--muted); font-weight:700;
+      text-transform:uppercase; letter-spacing:0.15em;
+    }
+    .card-address { font-size:.95rem; font-weight:700; color:var(--text); line-height:1.3; }
+    .card-suburb { font-size:.8rem; color:var(--muted); margin-top:-.2rem; }
+    .card-price {
+      font-size:1.15rem; font-weight:900; color:var(--brand);
+      font-family:'JetBrains Mono',monospace; letter-spacing:-0.01em;
+    }
+    .card-specs { font-size:.8rem; color:var(--muted); font-weight:600; }
+    .card-notes {
+      font-size:.8rem; color:var(--muted); background:var(--bg-dark);
+      border-radius:5px; padding:.45rem .7rem; line-height:1.55; border:1px solid var(--border);
+    }
+    .form-row-3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:.75rem; }
+    .card-footer {
+      display:flex; justify-content:space-between; align-items:center; margin-top:auto;
+      padding-top:.7rem; border-top:1px solid var(--border); flex-wrap:wrap; gap:.4rem;
+    }
+    .card-agent { display:flex; align-items:center; gap:.45rem; font-size:.75rem; color:var(--muted); }
+    .avatar {
+      width:26px; height:26px; border-radius:50%; background:var(--brand); color:var(--bg);
+      display:flex; align-items:center; justify-content:center;
+      font-size:.72rem; font-weight:700; flex-shrink:0;
+      font-family:'JetBrains Mono',monospace;
+    }
+
+    /* ── Buyer specifics ───────────────────────────────────────────────────── */
+    .buyer-contact { font-size:.8rem; color:var(--muted); }
+    .buyer-contact a { color:var(--forest); }
+    .bd-link { font-size:.78rem; font-weight:600; color:var(--buyer-color); text-decoration:none; }
+    .bd-link:hover { text-decoration:underline; }
+
+    /* ── Suburb chip input ─────────────────────────────────────────────────── */
+    .suburb-chip-wrap {
+      display:flex; flex-wrap:wrap; gap:.35rem; align-items:center;
+      min-height:42px; padding:.4rem .6rem;
+      border:1.5px solid var(--border); border-radius:4px;
+      background:var(--bg); cursor:text; transition:border-color .15s;
+    }
+    .suburb-chip-wrap:focus-within { border-color:var(--accent); }
+    .suburb-chip {
+      display:inline-flex; align-items:center; gap:.3rem;
+      background:var(--accent-dim); border:1px solid var(--accent-bdr);
+      color:var(--forest); border-radius:999px;
+      padding:.18rem .55rem; font-size:.75rem; font-weight:600;
+    }
+    .suburb-chip-x {
+      background:none; border:none; cursor:pointer; color:var(--muted);
+      font-size:.8rem; line-height:1; padding:0; display:flex; align-items:center;
+    }
+    .suburb-chip-x:hover { color:var(--danger); }
+    .suburb-chip-input {
+      border:none; outline:none; background:transparent;
+      font-family:'Inter',sans-serif; font-size:.85rem; color:var(--text);
+      min-width:140px; flex:1;
+    }
+    .buyer-row { display:flex; gap:.5rem; font-size:.8rem; }
+    .buyer-label { color:var(--muted); min-width:52px; font-weight:600; font-size:.75rem; }
+
+    /* ── Under bidder ──────────────────────────────────────────────────────── */
+    .underbidder-badge {
+      font-size:.76rem; color:var(--danger); font-weight:600;
+      background:rgba(212,80,80,0.07); border:1px solid rgba(212,80,80,0.22);
+      border-radius:5px; padding:.35rem .65rem;
+    }
+    .ub-history-wrap { border-top:1px dashed var(--border); padding-top:.4rem; display:flex; flex-direction:column; gap:.25rem; }
+    .ub-history-item { font-size:.72rem; color:var(--muted); }
+    .ub-date { opacity:.65; }
+
+    /* ── Action buttons ────────────────────────────────────────────────────── */
+    .btn-hot {
+      background:none; border:1.5px solid var(--border); color:var(--muted);
+      padding:.28rem .65rem; border-radius:5px; font-size:.72rem; cursor:pointer;
+      font-weight:600; transition:all .15s; white-space:nowrap; font-family:'Inter',sans-serif;
+    }
+    .btn-hot:hover,.btn-hot-on {
+      background:var(--hot-bg); border-color:var(--hot-border); color:#7a5a00;
+    }
+    .btn-underbidder {
+      background:none; border:1.5px solid rgba(212,80,80,0.35); color:var(--danger);
+      padding:.28rem .65rem; border-radius:5px; font-size:.72rem; cursor:pointer;
+      font-weight:600; transition:all .15s; white-space:nowrap; font-family:'Inter',sans-serif;
+    }
+    .btn-underbidder:hover { background:rgba(212,80,80,0.07); }
+    .btn-edit {
+      background:none; border:1px solid var(--accent-bdr); color:var(--forest);
+      padding:.25rem .6rem; border-radius:5px; font-size:.7rem; cursor:pointer; transition:all .15s;
+      font-family:'Inter',sans-serif;
+    }
+    .btn-edit:hover { background:var(--accent-dim); border-color:var(--accent); }
+    .btn-delete {
+      background:none; border:1px solid rgba(212,80,80,0.35); color:var(--danger);
+      padding:.25rem .6rem; border-radius:5px; font-size:.7rem; cursor:pointer; transition:all .15s;
+      font-family:'Inter',sans-serif;
+    }
+    .btn-delete:hover { background:var(--danger); color:#fff; border-color:var(--danger); }
+
+    /* ── Match chips ───────────────────────────────────────────────────────── */
+    .match-chip {
+      display:inline-block; background:var(--accent-dim); color:var(--forest);
+      border:1px solid var(--accent-bdr); border-radius:999px;
+      padding:.22rem .7rem; font-size:.72rem; font-weight:600; cursor:pointer; transition:background .15s;
+    }
+    .match-chip:hover { background:rgba(212,168,83,0.18); }
+    .hot-chip { background:var(--hot-bg); color:#7a5a00; border-color:var(--hot-border); }
+    .hot-chip:hover { background:rgba(212,168,83,0.16); }
+
+    /* ── Badges ────────────────────────────────────────────────────────────── */
+    .badge {
+      display:inline-block; padding:.18rem .55rem; border-radius:999px;
+      font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:0.1em;
+    }
+    .badge-available  { background:rgba(47,185,138,0.12); color:#1a7a5a; border:1px solid rgba(47,185,138,0.25); }
+    .badge-offer      { background:var(--accent-dim); color:#7a5a00; border:1px solid var(--accent-bdr); }
+    .badge-sold       { background:rgba(212,80,80,0.08); color:#9a2020; border:1px solid rgba(212,80,80,0.2); }
+    .badge-hot        { background:var(--accent-dim); color:#7a5a00; border:1px solid var(--accent-bdr); }
+    .badge-offmarket  { background:rgba(26,92,58,0.1); color:#1A5C3A; border:1px solid rgba(26,92,58,0.25); }
+    .badge-premarket  { background:rgba(212,168,83,0.12); color:#7a5a00; border:1px solid var(--accent-bdr); }
+    .badge-withdrawn  { background:rgba(100,100,100,0.08); color:#555; border:1px solid rgba(100,100,100,0.2); }
+
+    /* ── Empty & loading ───────────────────────────────────────────────────── */
+    .empty-state { text-align:center; padding:2.5rem 1rem; color:var(--muted); }
+    .empty-state .icon { font-size:2.25rem; margin-bottom:.5rem; opacity:.6; }
+    .empty-state p { font-size:.85rem; }
+    .empty-state-grid { grid-column:1/-1; }
+    .spinner {
+      width:32px; height:32px; border:2.5px solid var(--border);
+      border-top-color:var(--accent); border-radius:50%;
+      animation:spin .7s linear infinite; margin:2.5rem auto; grid-column:1/-1;
+    }
+    @keyframes spin { to { transform:rotate(360deg); } }
+    .grid-err { grid-column:1/-1; color:var(--danger); text-align:center; padding:2rem; }
+
+    /* ── Modals ────────────────────────────────────────────────────────────── */
+    .modal-backdrop {
+      position:fixed; inset:0; background:rgba(15,26,16,.55); display:flex;
+      align-items:center; justify-content:center; z-index:200; padding:1rem;
+      backdrop-filter:blur(4px);
+    }
+    .modal-box {
+      background:var(--surface); border-radius:var(--radius); padding:1.75rem;
+      width:100%; max-width:480px; max-height:90vh; overflow-y:auto;
+      box-shadow:0 24px 64px rgba(0,0,0,.3); border:1px solid var(--accent-bdr);
+    }
+    .modal-box-sm { max-width:400px; }
+    .modal-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem; }
+    .modal-header h2 {
+      font-size:.95rem; font-weight:700; color:var(--brand);
+      text-transform:uppercase; letter-spacing:0.08em;
+    }
+    .modal-sub { font-size:.82rem; color:var(--muted); margin:-1rem 0 1rem; line-height:1.6; }
+    .btn-close { background:none; border:none; font-size:1.3rem; cursor:pointer; color:var(--muted); line-height:1; }
+    .form-row-2 { display:grid; grid-template-columns:1fr 1fr; gap:.75rem; }
+    .modal-actions { display:flex; gap:.75rem; margin-top:.5rem; }
+    .btn-cancel {
+      flex:1; padding:.7rem; background:var(--bg); color:var(--text);
+      border:1.5px solid var(--border); border-radius:7px; font-size:.85rem;
+      cursor:pointer; font-family:'Inter',sans-serif; font-weight:600;
+      text-transform:uppercase; letter-spacing:0.05em;
+    }
+    .btn-cancel:hover { background:var(--bg-dark); }
+    .form-err { color:var(--danger); font-size:.8rem; margin-bottom:.4rem; min-height:1.2em; }
+    .submit-wide { flex:2; }
+
+    /* Match modal */
+    .match-row { border-bottom:1px solid var(--border); padding:.75rem 0; }
+    .match-row:last-child { border-bottom:none; }
+    .match-name { font-weight:700; margin-bottom:.2rem; font-size:.9rem; }
+    .match-detail { font-size:.78rem; color:var(--muted); margin-bottom:.1rem; }
+    .match-agent { font-size:.72rem; color:var(--muted); margin-top:.2rem; font-style:italic; }
+
+    /* ── Toast ─────────────────────────────────────────────────────────────── */
+    .toast {
+      position:fixed; bottom:1.5rem; left:50%;
+      transform:translateX(-50%) translateY(100px);
+      background:var(--brand); color:var(--bg); padding:.7rem 1.5rem;
+      border-radius:999px; font-size:.82rem; font-weight:600; transition:transform .3s ease;
+      z-index:300; white-space:nowrap; box-shadow:0 4px 20px rgba(0,0,0,.25);
+      border:1px solid var(--accent-bdr); letter-spacing:0.04em;
+    }
+    .toast.show { transform:translateX(-50%) translateY(0); }
+    .toast.toast-error { background:var(--danger); border-color:rgba(212,80,80,.4); }
+
+    /* ── Responsive ────────────────────────────────────────────────────────── */
+    @media (max-width:900px) {
+      .dash-columns { grid-template-columns:1fr; }
+      .stats-bar { grid-template-columns:1fr 1fr; }
+    }
+    @media (max-width:600px) {
+      .navbar-user { display:none; }
+      .form-row-2 { grid-template-columns:1fr; }
+      .grid { grid-template-columns:1fr; }
+      .pane { padding:1rem .75rem; }
+      .modal-box { padding:1.25rem; }
+      .tab-nav-btn { padding:.65rem .85rem; font-size:.72rem; }
+      .stats-bar { grid-template-columns:1fr 1fr; gap:.5rem; }
+      .stat-num { font-size:1.6rem; }
+    }
+
+    /* ── Hero landing section ──────────────────────────────────────────────── */
+    html { scroll-behavior:smooth; }
+    #hero-screen {
+      min-height:100vh;
+      /* ↓ REPLACE THIS URL with your background image */
+      background-image: url('thumb-1920-586941.jpg');
+      background-size:cover; background-position:center; background-color:#111;
+    }
+    .hero-overlay {
+      min-height:100vh; background:rgba(0,0,0,0.72);
+      display:flex; flex-direction:column;
+      align-items:center; justify-content:center;
+      padding:4rem 1.5rem; text-align:center;
+    }
+    .hero-eyebrow {
+      font-size:10px; font-weight:700; letter-spacing:0.3em; text-transform:uppercase;
+      color:var(--accent); margin-bottom:1.25rem;
+    }
+    .hero-title {
+      font-size:clamp(3rem,9vw,6.5rem); font-weight:900;
+      text-transform:uppercase; letter-spacing:-0.03em;
+      color:#fff; line-height:1; margin-bottom:1.25rem;
+    }
+    .hero-title span { color:var(--accent); }
+    .hero-tagline {
+      font-size:clamp(1rem,2.2vw,1.3rem); color:rgba(255,255,255,0.82);
+      max-width:580px; line-height:1.55; margin-bottom:3rem;
+      font-weight:400; font-style:italic;
+    }
+    .hero-features {
+      display:flex; gap:1.25rem; flex-wrap:wrap;
+      justify-content:center; max-width:880px; margin-bottom:3rem;
+    }
+    .hero-feat {
+      display:flex; gap:.9rem; align-items:flex-start; text-align:left;
+      flex:1; min-width:220px; max-width:265px;
+      background:rgba(255,255,255,0.06); border:1px solid rgba(212,168,83,0.28);
+      border-radius:10px; padding:1.25rem; transition:background .2s;
+    }
+    .hero-feat:hover { background:rgba(255,255,255,0.10); }
+    .feat-icon { font-size:1.6rem; flex-shrink:0; margin-top:.05rem; }
+    .hero-feat strong {
+      display:block; color:#fff; font-size:.9rem;
+      font-weight:700; margin-bottom:.3rem; line-height:1.3;
+    }
+    .hero-feat p { color:rgba(255,255,255,0.62); font-size:.78rem; line-height:1.65; margin:0; }
+    .hero-cta {
+      display:inline-block; background:var(--accent); color:var(--brand);
+      padding:.85rem 2.5rem; border-radius:7px; font-size:.82rem; font-weight:700;
+      text-decoration:none; text-transform:uppercase; letter-spacing:0.12em;
+      transition:background .15s,transform .15s;
+    }
+    .hero-cta:hover { background:#c49640; transform:translateY(2px); }
+    @media (max-width:600px) {
+      .hero-features { flex-direction:column; align-items:center; }
+      .hero-feat { max-width:100%; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════ AUTH ══════════════════════════════════ -->
+<!-- ══════════════════════════════════ HERO ══════════════════════════════════ -->
+<div id="hero-screen">
+  <div class="hero-overlay">
+    <div class="hero-eyebrow">Members Only</div>
+    <h1 class="hero-title">Secret <span>Sauce</span></h1>
+    <p class="hero-tagline">Less fumbling. More comms.</p>
+    <div class="hero-features">
+      <div class="hero-feat">
+        <span class="feat-icon">🏠</span>
+        <div>
+          <strong>Get your off-markets in front of the whole team</strong>
+          <p>Drop your off-market into the pool and let the team run. Who needs REA?</p>
+        </div>
+      </div>
+      <div class="hero-feat">
+        <span class="feat-icon">🔥</span>
+        <div>
+          <strong>Hot buyers, one look</strong>
+          <p>See who's circling, who just missed out, and who's ready to write a cheque — today.</p>
+        </div>
+      </div>
+      <div class="hero-feat">
+        <span class="feat-icon">🎯</span>
+        <div>
+          <strong>Share the love with the team</strong>
+          <p>All the underbidders in one place — buyer budgets, suburb wish lists, matched to listings across the whole team.</p>
+        </div>
+      </div>
+    </div>
+    <a href="#auth-screen" class="hero-cta">Make me some money ↓</a>
+  </div>
+</div>
+
+<div id="auth-screen">
+  <div class="auth-box">
+    <div class="auth-logo">
+      <div class="auth-eyebrow">Members Only</div>
+      <h1>Secret <span>Sauce</span></h1>
+      <p>Off-market listings &amp; buyer intelligence</p>
+    </div>
+    <p id="auth-error" class="auth-error"></p>
+    <form onsubmit="handleLogin(event)">
+      <div class="form-group">
+        <label>Email</label>
+        <input id="login-email" type="email" placeholder="you@jelliscraig.com.au" required autocomplete="email" />
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input id="login-password" type="password" placeholder="••••••••" required autocomplete="current-password" />
+      </div>
+      <button id="login-btn" class="btn-primary" type="submit">Log in</button>
+    </form>
+    <div class="auth-notice">🔒 Access is by invitation only. Contact your admin to get an account.</div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════ APP ═══════════════════════════════════ -->
+<div id="app-screen" class="hidden">
+
+  <nav class="navbar">
+    <div class="navbar-brand">Secret <span>Sauce</span></div>
+    <div class="navbar-right">
+      <span class="navbar-user" id="user-name"></span>
+      <button class="btn-logout" onclick="handleLogout()">Log out</button>
+    </div>
+  </nav>
+
+  <div class="tab-bar">
+    <button id="tab-dashboard" class="tab-nav-btn tab-active" onclick="switchTab('dashboard')">📊 Dashboard</button>
+    <button id="tab-listings"  class="tab-nav-btn"            onclick="switchTab('listings')">🏠 Listings</button>
+    <button id="tab-buyers"    class="tab-nav-btn"            onclick="switchTab('buyers')">👥 Buyers</button>
+  </div>
+
+  <!-- ── DASHBOARD PANE ─────────────────────────────────────────────────── -->
+  <div id="pane-dashboard" class="pane">
+    <div class="stats-bar">
+      <div class="stat-card stat-hot">
+        <div class="stat-num" id="stat-hot">—</div>
+        <div class="stat-label">🔥 Hot Buyers</div>
+      </div>
+      <div class="stat-card stat-avail">
+        <div class="stat-num" id="stat-available">—</div>
+        <div class="stat-label">✅ Available Listings</div>
+      </div>
+      <div class="stat-card stat-total-l">
+        <div class="stat-num" id="stat-matches">—</div>
+        <div class="stat-label">🎯 Total Matches</div>
+      </div>
+    </div>
+
+    <div class="dash-section-title">🏠 All Listings</div>
+    <div id="dash-listings" class="grid" style="margin-bottom:2rem"></div>
+    <div id="empty-avail" class="empty-state hidden"><div class="icon">🏡</div><p>No listings yet — add one in the Listings tab.</p></div>
+
+    <div class="dash-section-title">👥 All Buyers</div>
+    <div id="dash-hot-buyers" class="grid" style="margin-bottom:2rem"></div>
+    <div id="empty-hot" class="empty-state hidden"><div class="icon">👥</div><p>No buyers yet — add one in the Buyers tab.</p></div>
+
+    <div class="dash-section-title">🔴 Underbidders</div>
+    <div id="dash-underbidders" class="grid" style="margin-bottom:2rem"></div>
+    <div id="empty-ub" class="empty-state hidden"><div class="icon">🔴</div><p>No underbidders recorded yet.</p></div>
+  </div>
+
+  <!-- ── LISTINGS PANE ──────────────────────────────────────────────────── -->
+  <div id="pane-listings" class="pane hidden">
+    <div class="toolbar">
+      <input id="listing-filter" class="toolbar-search" type="text" placeholder="Search address, suburb, price…" oninput="onListingFilter()" />
+      <select id="listing-sort" class="toolbar-sort" onchange="onListingSort()">
+        <option value="newest">Newest first</option>
+        <option value="price-asc">Price: low → high</option>
+        <option value="price-desc">Price: high → low</option>
+        <option value="suburb">Suburb A–Z</option>
+      </select>
+      <button class="btn-refresh" onclick="refreshAll()" title="Refresh">↻</button>
+      <button class="btn-add" onclick="openAddListing()">＋ Add listing</button>
+    </div>
+    <div class="count-row" id="listings-count"></div>
+    <div id="listings-grid" class="grid"></div>
+    <div id="empty-listings" class="empty-state empty-state-grid hidden">
+      <div class="icon">🏡</div><p>No listings yet — add the first one!</p>
+    </div>
+  </div>
+
+  <!-- ── BUYERS PANE ────────────────────────────────────────────────────── -->
+  <div id="pane-buyers" class="pane hidden">
+    <div class="toolbar">
+      <input id="buyer-filter" class="toolbar-search" type="text" placeholder="Search name, suburb, budget…" oninput="onBuyerFilter()" />
+      <button class="btn-refresh" onclick="refreshAll()" title="Refresh">↻</button>
+      <button class="btn-add" onclick="openAddBuyer()">＋ Add buyer</button>
+    </div>
+    <div class="count-row" id="buyers-count"></div>
+    <div id="buyers-grid" class="grid"></div>
+    <div id="empty-buyers" class="empty-state empty-state-grid hidden">
+      <div class="icon">👥</div><p>No buyers yet — add the first one!</p>
+    </div>
+  </div>
+
+</div>
+
+<!-- ══════════════════════ ADD LISTING MODAL ═════════════════════════════════ -->
+<div id="modal-add-listing" class="modal-backdrop hidden">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h2 id="modal-listing-title">Add off-market listing</h2>
+      <button class="btn-close" onclick="closeAddListing()">✕</button>
+    </div>
+    <form id="add-listing-form" onsubmit="submitListing(event)">
+      <div class="form-group"><label>Street address *</label><input id="l-address" type="text" placeholder="Start typing an address…" required autocomplete="off" /></div>
+      <div class="form-group"><label>Suburb *</label><input id="l-suburb" type="text" placeholder="Melbourne" required /></div>
+      <div class="form-row-2">
+        <div class="form-group"><label>Price from</label><input id="l-price-min" type="text" placeholder="$1,100,000" /></div>
+        <div class="form-group"><label>Price to</label><input id="l-price-max" type="text" placeholder="$1,300,000" /></div>
+      </div>
+      <div class="form-row-2">
+        <div class="form-group"><label>Property type</label><select id="l-type"><option>House</option><option>Apartment</option><option>Townhouse</option><option>Land</option><option>Other</option></select></div>
+        <div class="form-group"><label>Status</label><select id="l-status"><option>Off Market</option><option>Pre-Market</option><option>Available</option><option>Withdrawn</option></select></div>
+      </div>
+      <div class="form-row-3">
+        <div class="form-group"><label>Beds</label><input id="l-beds" type="number" min="0" max="20" placeholder="3" /></div>
+        <div class="form-group"><label>Baths</label><input id="l-baths" type="number" min="0" max="20" placeholder="2" /></div>
+        <div class="form-group"><label>Car parks</label><input id="l-cars" type="number" min="0" max="10" placeholder="1" /></div>
+      </div>
+      <div class="form-group"><label>Notes</label><textarea id="l-notes" rows="3" placeholder="Vendor motivation, features, inspection access…"></textarea></div>
+      <p id="listing-err" class="form-err"></p>
+      <div class="modal-actions">
+        <button type="button" class="btn-cancel" onclick="closeAddListing()">Cancel</button>
+        <button id="l-submit" type="submit" class="btn-primary submit-wide">Add Listing</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ══════════════════════ ADD BUYER MODAL ═══════════════════════════════════ -->
+<div id="modal-add-buyer" class="modal-backdrop hidden">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h2 id="modal-buyer-title">Add buyer</h2>
+      <button class="btn-close" onclick="closeAddBuyer()">✕</button>
+    </div>
+    <form id="add-buyer-form" onsubmit="submitBuyer(event)">
+      <div class="form-group"><label>Full name *</label><input id="b-name" type="text" placeholder="John & Jane Smith" required /></div>
+      <div class="form-row-2">
+        <div class="form-group"><label>Min budget</label><input id="b-budget-min" type="text" placeholder="$800,000" /></div>
+        <div class="form-group"><label>Max budget</label><input id="b-budget-max" type="text" placeholder="$1,200,000" /></div>
+      </div>
+      <div class="form-group">
+        <label>Suburbs of interest</label>
+        <div class="suburb-chip-wrap" id="suburb-chip-wrap" onclick="el('b-suburb-input').focus()">
+          <input id="b-suburb-input" class="suburb-chip-input" type="text" placeholder="Type suburb, press Enter…" autocomplete="off" />
+        </div>
+        <input type="hidden" id="b-suburbs" />
+      </div>
+      <div class="form-group"><label>Property type</label><select id="b-type"><option>Any</option><option>House</option><option>Apartment</option><option>Townhouse</option><option>Land</option></select></div>
+      <div class="form-group"><label>Box &amp; Dice profile link</label><input id="b-boxdice" type="url" placeholder="https://app.boxanddice.com.au/contacts/…" /></div>
+      <div class="form-group"><label>Notes</label><textarea id="b-notes" rows="3" placeholder="Must-haves, lifestyle, motivation, timeline…"></textarea></div>
+      <p id="buyer-err" class="form-err"></p>
+      <div class="modal-actions">
+        <button type="button" class="btn-cancel" onclick="closeAddBuyer()">Cancel</button>
+        <button id="b-submit" type="submit" class="btn-primary submit-wide">Add Buyer</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ══════════════════════ UNDER BIDDER MODAL ════════════════════════════════ -->
+<div id="modal-underbidder" class="modal-backdrop hidden">
+  <div class="modal-box modal-box-sm">
+    <div class="modal-header">
+      <h2>🔴 Record Under Bidder</h2>
+      <button class="btn-close" onclick="closeUnderBidder()">✕</button>
+    </div>
+    <p class="modal-sub">Enter the property they just missed out on. They'll automatically be marked as a 🔥 Hot buyer.</p>
+    <form id="ub-form" onsubmit="submitUnderBidder(event)">
+      <div class="form-group"><label>Property address *</label><input id="ub-address" type="text" placeholder="14 Elgin Street, Carlton" required /></div>
+      <div class="form-group"><label>Price they bid / missed at *</label><input id="ub-price" type="text" placeholder="$1,450,000" required /></div>
+      <p id="ub-err" class="form-err"></p>
+      <div class="modal-actions">
+        <button type="button" class="btn-cancel" onclick="closeUnderBidder()">Cancel</button>
+        <button id="ub-submit" type="submit" class="btn-primary submit-wide">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ══════════════════════ MATCHES MODAL ═════════════════════════════════════ -->
+<div id="modal-matches" class="modal-backdrop hidden">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h2 id="match-modal-title"></h2>
+      <button class="btn-close" onclick="closeMatches()">✕</button>
+    </div>
+    <div id="match-modal-body"></div>
+  </div>
+</div>
+
+<!-- ══════════════════════ WELCOME MODAL ══════════════════════════════════════ -->
+<div id="modal-welcome" class="modal-backdrop hidden">
+  <div class="modal-box modal-box-sm" style="text-align:center">
+    <div style="font-size:2.5rem;margin-bottom:1rem">⚔️</div>
+    <h2 id="welcome-heading" style="font-size:1.1rem;font-weight:900;color:var(--brand);margin-bottom:.75rem"></h2>
+    <p id="welcome-msg" style="font-size:.88rem;color:var(--muted);line-height:1.75;margin-bottom:1.5rem"></p>
+    <button id="welcome-cta" class="btn-primary" onclick="closeWelcome()" style="max-width:200px;margin:0 auto"></button>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+</body>
+</html>
