@@ -166,7 +166,35 @@
       } catch { toast("Error deleting listing.",true); }
     };
 
-    window.openAddListing  = () => { el("add-listing-form").reset(); clearErr("listing-err"); showModal("modal-add-listing"); };
+    window.openAddListing  = () => {
+      el("add-listing-form").reset();
+      clearErr("listing-err");
+      showModal("modal-add-listing");
+      // Init Google Maps autocomplete lazily — must run after modal is visible
+      // so the input has real dimensions for the dropdown to anchor to
+      if (!window._acInit && window.google?.maps?.places) {
+        const af = el("l-address");
+        const ac = new google.maps.places.Autocomplete(af, {
+          componentRestrictions: { country: ["au"] },
+          fields: ["address_components"],
+          types: ["address"],
+        });
+        ac.addListener("place_changed", () => {
+          const place = ac.getPlace();
+          if (!place.address_components) return;
+          let num = "", route = "", suburb = "";
+          for (const c of place.address_components) {
+            if (c.types[0] === "street_number") num = c.long_name;
+            if (c.types[0] === "route")         route = c.short_name;
+            if (c.types[0] === "locality")      suburb = c.long_name;
+          }
+          af.value = [num, route].filter(Boolean).join(" ");
+          const sf = el("l-suburb");
+          if (sf && suburb) sf.value = suburb;
+        });
+        window._acInit = ac;
+      }
+    };
     window.closeAddListing = () => hideModal("modal-add-listing");
 
     window.submitListing = async (e) => {
@@ -520,32 +548,7 @@
   </script>
 
   <!-- ── Google Maps Places API ──────────────────────────────────────────── -->
-  <script>
-    function initAddressAutocomplete() {
-      const addressField = document.getElementById("l-address");
-      if (!addressField) return;
-      const ac = new google.maps.places.Autocomplete(addressField, {
-        componentRestrictions: { country: ["au"] },
-        fields: ["address_components"],
-        types: ["address"],
-      });
-      ac.addListener("place_changed", function() {
-        const place = ac.getPlace();
-        if (!place.address_components) return;
-        let streetNum = "", route = "", suburb = "";
-        for (const c of place.address_components) {
-          const t = c.types[0];
-          if (t === "street_number") streetNum = c.long_name;
-          if (t === "route")         route     = c.short_name;
-          if (t === "locality")      suburb    = c.long_name;
-        }
-        addressField.value = [streetNum, route].filter(Boolean).join(" ");
-        const suburbField = document.getElementById("l-suburb");
-        if (suburbField && suburb) suburbField.value = suburb;
-      });
-    }
-  </script>
-  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDbddkDT76iAf2ShHrWbNdhmmwf-4OMeb8&callback=initAddressAutocomplete&libraries=places&v=weekly" defer></script>
+  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDbddkDT76iAf2ShHrWbNdhmmwf-4OMeb8&libraries=places&v=weekly" defer></script>
 
   <style>
     *, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
