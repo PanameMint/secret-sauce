@@ -83,6 +83,7 @@
           setTimeout(() => showModal("modal-welcome"), 600);
         }
       } else {
+        sessionStorage.removeItem("session_welcomed");
         show("hero-screen"); show("auth-screen"); hide("app-screen");
       }
     });
