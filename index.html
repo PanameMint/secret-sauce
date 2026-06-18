@@ -8,7 +8,7 @@
   <link rel="apple-touch-icon" href="favicon.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="Secret Sauce">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
@@ -136,7 +136,7 @@
     };
 
     window.handleForgotPassword = async () => {
-      const email = val("login-email").trim();
+      const email = val("login-email");
       if (!email) { setAuthErr("Enter your email above first."); return; }
       setAuthErr("");
       try {
@@ -211,6 +211,8 @@
     // ── Load ───────────────────────────────────────────────────────────────
     async function loadAll() {
       await Promise.all([loadListings(), loadBuyers()]);
+      renderListings();
+      if (activeTab === "dashboard") renderDashboard();
     }
     window.refreshAll = () => loadAll();
 
@@ -362,7 +364,7 @@
       try {
         const snap = await getDocs(query(collection(db,"buyers"), orderBy("createdAt","desc")));
         buyers = snap.docs.map(d => ({ id:d.id, ...d.data() }));
-        renderBuyers(); renderListings();
+        renderBuyers();
         if (activeTab==="dashboard") renderDashboard();
       } catch(err) {
         el("buyers-grid").innerHTML = errMsg("Failed to load buyers."); console.error(err);
@@ -414,7 +416,7 @@
         <div class="card-address">${b.name}</div>
         <div class="buyer-row"><span class="buyer-label">Budget</span><span>${b.budgetMin ? `$${fmt(b.budgetMin)}` : "?"} – ${b.budgetMax ? `$${fmt(b.budgetMax)}` : "?"}</span></div>
         <div class="buyer-row"><span class="buyer-label">Suburbs</span><span>${b.suburbs||"Flexible"}</span></div>
-        ${!compact&&b.boxdice?`<div class="buyer-contact"><a href="${b.boxdice}" target="_blank" rel="noopener" class="bd-link">📋 Box &amp; Dice profile ↗</a></div>`:""}
+        ${!compact&&b.boxdice&&/^https?:\/\//i.test(b.boxdice)?`<div class="buyer-contact"><a href="${b.boxdice}" target="_blank" rel="noopener noreferrer" class="bd-link">📋 Box &amp; Dice profile ↗</a></div>`:""}
         ${!compact&&b.notes?`<div class="card-notes">${b.notes}</div>`:""}
         ${missBadge}
         ${historyHtml}
@@ -454,7 +456,7 @@
       showModal("modal-underbidder");
       el("ub-address").focus();
     };
-    window.closeUnderBidder = () => hideModal("modal-underbidder");
+    window.closeUnderBidder = () => { hideModal("modal-underbidder"); pendingUnderBidderId = null; };
 
     window.submitUnderBidder = async (e) => {
       e.preventDefault(); clearErr("ub-err");
@@ -658,9 +660,9 @@
     window.closeMatches = () => hideModal("modal-matches");
 
     // ── Filter/sort events ─────────────────────────────────────────────────
-    window.onListingFilter = () => renderListings();
-    window.onListingSort   = () => renderListings();
-    window.onBuyerFilter   = () => renderBuyers();
+    window.onListingFilter = renderListings;
+    window.onListingSort   = renderListings;
+    window.onBuyerFilter   = renderBuyers;
 
     // ── Utilities ──────────────────────────────────────────────────────────
     function el(id)         { return document.getElementById(id); }
@@ -679,8 +681,11 @@
     function hideModal(id)  { hide(id); document.body.style.overflow=""; }
 
     document.addEventListener("click", e => {
-      ["modal-add-listing","modal-add-buyer","modal-matches","modal-underbidder","modal-welcome"]
-        .forEach(id => { if (e.target.id===id) hideModal(id); });
+      if (e.target.id === "modal-add-listing")  { hideModal("modal-add-listing");  editingListingId = null; }
+      if (e.target.id === "modal-add-buyer")    { hideModal("modal-add-buyer");    editingBuyerId = null; }
+      if (e.target.id === "modal-underbidder")  { hideModal("modal-underbidder");  pendingUnderBidderId = null; }
+      if (e.target.id === "modal-matches")      { hideModal("modal-matches"); }
+      if (e.target.id === "modal-welcome")      { hideModal("modal-welcome"); }
     });
 
     // ── Suburb chip input ──────────────────────────────────────────────────
@@ -749,15 +754,17 @@
           try {
             const place = ac.getPlace();
             if (!place.address_components) return;
-            let num = "", route = "", suburb = "", state = "", postcode = "";
+            let unit = "", num = "", route = "", suburb = "", state = "", postcode = "";
             for (const c of place.address_components) {
-              if (c.types[0] === "street_number") num = c.long_name;
-              if (c.types[0] === "route")                  route    = c.short_name;
-              if (c.types[0] === "locality")               suburb   = c.long_name;
+              if (c.types[0] === "subpremise")   unit     = c.long_name;
+              if (c.types[0] === "street_number") num     = c.long_name;
+              if (c.types[0] === "route")         route   = c.short_name;
+              if (c.types[0] === "locality")      suburb  = c.long_name;
               if (c.types[0] === "administrative_area_level_1") state = c.short_name;
-              if (c.types[0] === "postal_code")            postcode = c.long_name;
+              if (c.types[0] === "postal_code")   postcode = c.long_name;
             }
-            af.value = [num, route].filter(Boolean).join(" ");
+            const street = [num, route].filter(Boolean).join(" ");
+            af.value = unit ? `${unit}/${street}` : street;
             const sf = document.getElementById("l-suburb");
             if (sf) sf.value = [suburb, state, postcode].filter(Boolean).join(" ");
           } catch(e) { console.warn("Place parse error:", e); }
@@ -797,7 +804,7 @@
     }
     body { font-family:'Inter',sans-serif; background:var(--bg); color:var(--text); min-height:100vh; font-size:14px; line-height:1.75; }
     .hidden { display:none !important; }
-    a { color:var(--forest); }
+    a { color:var(--brand); }
 
     /* ── Auth ──────────────────────────────────────────────────────────────── */
     #auth-screen {
@@ -846,7 +853,7 @@
       cursor:pointer; transition:background .15s; font-family:'Inter',sans-serif;
       letter-spacing:0.08em; text-transform:uppercase;
     }
-    .btn-primary:hover:not(:disabled) { background:var(--forest); }
+    .btn-primary:hover:not(:disabled) { background:var(--brand); }
     .btn-primary:disabled { opacity:.5; cursor:not-allowed; }
     .auth-error { color:var(--danger); font-size:.82rem; margin-bottom:.75rem; min-height:1.2em; }
     .forgot-pw-link {
@@ -862,7 +869,7 @@
     .auth-notice {
       margin-top:1.25rem; padding:.75rem 1rem;
       background:var(--accent-dim); border:1px solid var(--accent-bdr);
-      border-radius:7px; font-size:.78rem; color:var(--forest); line-height:1.6;
+      border-radius:7px; font-size:.78rem; color:var(--brand); line-height:1.6;
     }
     .auth-lock { font-size:2.5rem; margin-bottom:.5rem; }
 
@@ -918,10 +925,10 @@
     .stat-card::before { content:''; position:absolute; top:0; left:0; right:0; height:2px; }
     .stat-hot::before { background:var(--accent); }
     .stat-avail::before { background:var(--success); }
-    .stat-matches::before { background:var(--forest); }
+    .stat-matches::before { background:var(--brand); }
     .stat-num {
       font-size:2.2rem; font-weight:900; color:var(--brand); line-height:1;
-      font-family:'JetBrains Mono',monospace;
+      font-family:'DM Mono',monospace;
     }
     .stat-hot .stat-num { color:var(--accent); }
     .stat-avail .stat-num { color:var(--success); }
@@ -1017,7 +1024,7 @@
     .card-suburb { font-size:.8rem; color:var(--muted); margin-top:-.2rem; }
     .card-price {
       font-size:1.15rem; font-weight:900; color:var(--brand);
-      font-family:'JetBrains Mono',monospace; letter-spacing:-0.01em;
+      font-family:'DM Mono',monospace; letter-spacing:-0.01em;
     }
     .card-specs { font-size:.8rem; color:var(--muted); font-weight:600; }
     .card-notes {
@@ -1034,12 +1041,12 @@
       width:26px; height:26px; border-radius:50%; background:var(--brand); color:var(--bg);
       display:flex; align-items:center; justify-content:center;
       font-size:.72rem; font-weight:700; flex-shrink:0;
-      font-family:'JetBrains Mono',monospace;
+      font-family:'DM Mono',monospace;
     }
 
     /* ── Buyer specifics ───────────────────────────────────────────────────── */
     .buyer-contact { font-size:.8rem; color:var(--muted); }
-    .buyer-contact a { color:var(--forest); }
+    .buyer-contact a { color:var(--brand); }
     .bd-link { font-size:.78rem; font-weight:600; color:var(--buyer-color); text-decoration:none; }
     .bd-link:hover { text-decoration:underline; }
 
@@ -1054,7 +1061,7 @@
     .suburb-chip {
       display:inline-flex; align-items:center; gap:.3rem;
       background:var(--accent-dim); border:1px solid var(--accent-bdr);
-      color:var(--forest); border-radius:999px;
+      color:var(--brand); border-radius:999px;
       padding:.18rem .55rem; font-size:.75rem; font-weight:600;
     }
     .suburb-chip-x {
@@ -1096,7 +1103,7 @@
     }
     .btn-underbidder:hover { background:rgba(212,80,80,0.07); }
     .btn-edit {
-      background:none; border:1px solid var(--accent-bdr); color:var(--forest);
+      background:none; border:1px solid var(--accent-bdr); color:var(--brand);
       padding:.25rem .6rem; border-radius:5px; font-size:.7rem; cursor:pointer; transition:all .15s;
       font-family:'Inter',sans-serif;
     }
@@ -1110,7 +1117,7 @@
 
     /* ── Match chips ───────────────────────────────────────────────────────── */
     .match-chip {
-      display:inline-block; background:var(--accent-dim); color:var(--forest);
+      display:inline-block; background:var(--accent-dim); color:var(--brand);
       border:1px solid var(--accent-bdr); border-radius:999px;
       padding:.22rem .7rem; font-size:.72rem; font-weight:600; cursor:pointer; transition:background .15s;
     }
@@ -1243,7 +1250,6 @@
 
     /* ── Responsive ────────────────────────────────────────────────────────── */
     @media (max-width:900px) {
-      .dash-columns { grid-template-columns:1fr; }
       .stats-bar { grid-template-columns:1fr 1fr; }
       .dash-layout { grid-template-columns:1fr; }
       .users-sidebar { position:static; }
