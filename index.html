@@ -739,6 +739,11 @@
       if (!input) return;
       input.addEventListener("keydown", e => {
         if (e.key === "Enter" || e.key === "," || e.key === "Tab") {
+          // If pac dropdown is open, let the capture-phase listener + place_changed handle it
+          if (e.key === "Enter") {
+            const pac = document.querySelector(".pac-container");
+            if (pac && pac.querySelector(".pac-item")) return;
+          }
           e.preventDefault();
           const v = input.value.trim().replace(/,$/, "");
           if (v && !suburbChips.some(s => s.toLowerCase() === v.toLowerCase())) {
@@ -793,6 +798,8 @@
             if (sf) sf.value = [suburb, state, postcode].filter(Boolean).join(" ");
           } catch(e) { console.warn("Place parse error:", e); }
         });
+      // Auto-select first suggestion on Enter for address field
+      attachPacEnterSelect(af);
       } catch(e) { console.warn("Maps autocomplete init failed:", e); }
 
       // Suburb autocomplete for buyer form
@@ -819,9 +826,26 @@
               if (window.addSuburbChip) window.addSuburbChip(name);
             } catch(e) { console.warn("Suburb place parse:", e); }
           });
+          // Auto-select first suggestion on Enter for suburb field
+          attachPacEnterSelect(si);
         }
       } catch(e) { console.warn("Suburb autocomplete init failed:", e); }
     };
+
+    // Capture-phase listener: on Enter, if pac dropdown is open with no item highlighted,
+    // simulate ArrowDown then re-fire Enter so Google selects the top suggestion.
+    function attachPacEnterSelect(input) {
+      input.addEventListener("keydown", e => {
+        if (e.key !== "Enter") return;
+        const pac = document.querySelector(".pac-container");
+        if (!pac || !pac.querySelector(".pac-item")) return;
+        if (pac.querySelector(".pac-item-selected")) return; // already highlighted — let it through
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", keyCode: 40, which: 40, bubbles: true, cancelable: true }));
+        setTimeout(() => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true })), 20);
+      }, true); // capture phase fires before Google's listener
+    }
   </script>
   <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDbddkDT76iAf2ShHrWbNdhmmwf-4OMeb8&libraries=places&v=weekly&callback=mapsReady" async defer></script>
 
