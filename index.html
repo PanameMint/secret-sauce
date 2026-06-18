@@ -18,7 +18,7 @@
     } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
     import {
       getFirestore, collection, addDoc, getDocs, deleteDoc, updateDoc,
-      doc, getDoc, query, orderBy, serverTimestamp, arrayUnion,
+      doc, getDoc, query, orderBy, serverTimestamp, arrayUnion, increment, setDoc,
     } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -48,6 +48,8 @@
     let pendingUnderBidderId = null;
     let editingListingId = null;
     let editingBuyerId   = null;
+    let userStats        = { listingsAdded:0, buyersAdded:0, hotMarkings:0, underbiddersLogged:0 };
+    let userAchievements = [];
 
     // ── Auth ───────────────────────────────────────────────────────────────
     onAuthStateChanged(auth, async (user) => {
@@ -66,7 +68,10 @@
 
         try {
           const userSnap = await getDoc(doc(db, "users", user.uid));
-          currentUsername = userSnap.exists() ? (userSnap.data().username || user.email) : user.email;
+          const ud = userSnap.exists() ? userSnap.data() : {};
+          currentUsername  = ud.username || user.email;
+          userStats        = ud.stats || { listingsAdded:0, buyersAdded:0, hotMarkings:0, underbiddersLogged:0 };
+          userAchievements = ud.achievements || [];
         } catch { currentUsername = user.email; }
 
         hide("set-password-screen");
@@ -101,20 +106,58 @@
       el("burger-overlay").classList.toggle("hidden");
     };
 
+    const TEAM_A = ['percival','mordred','lancelot','gawain'];
+    const TEAM_B = ['galahad','bedivere','tristan'];
+
+    function getArthurEmoji(grailName, excalName) {
+      const g = (grailName || '').toLowerCase();
+      const e = (excalName  || '').toLowerCase();
+      const gA = TEAM_A.some(n => g.includes(n));
+      const eA = TEAM_A.some(n => e.includes(n));
+      const gB = TEAM_B.some(n => g.includes(n));
+      const eB = TEAM_B.some(n => e.includes(n));
+      if ((gA && eB) || (gB && eA)) return '😱';
+      if (g.includes('galahad') || e.includes('galahad')) return '😒';
+      if (['bedivere','tristan'].some(n => g.includes(n) || e.includes(n))) return '😴';
+      if (gA || eA) return '😊';
+      return '😊';
+    }
+
     async function loadUsers() {
       try {
         const snap = await getDocs(collection(db, "users"));
+        const users = snap.docs.map(d => ({
+          uid:          d.id,
+          username:     d.data().username || d.id,
+          achievements: d.data().achievements || [],
+          buyersAdded:  (d.data().stats || {}).buyersAdded || 0,
+        }));
+
+        const byAch  = [...users].sort((a,b) => b.achievements.length - a.achievements.length);
+        const grailU = byAch[0]?.achievements.length > 0 ? byAch[0] : null;
+        const excalU = byAch[1]?.achievements.length > 0 ? byAch[1] : null;
+        const crownU = [...users].sort((a,b) => b.buyersAdded - a.buyersAdded)
+                         .filter(u => u.buyersAdded > 0)[0] || null;
+
+        const artEmoji = getArthurEmoji(grailU?.username, excalU?.username);
+
         const list = el("users-list");
         list.innerHTML = "";
-        snap.docs.forEach(d => {
-          const username = d.data().username || d.id;
-          const isYou = d.id === currentUser?.uid;
+        users.forEach(u => {
+          const isYou    = u.uid === currentUser?.uid;
+          const isArthur = u.username.toLowerCase().includes('arthur');
+          const icons = [
+            grailU?.uid === u.uid ? '<span title="Top Achiever — Holy Grail">🏆</span>' : '',
+            excalU?.uid === u.uid ? '<span title="Runner-up — Excalibur">⚔️</span>'     : '',
+            crownU?.uid === u.uid ? '<span title="Most Buyers Referred">👑</span>'       : '',
+            isArthur              ? `<span class="arthur-emoji">${artEmoji}</span>`       : '',
+          ].join('');
           const row = document.createElement("div");
           row.className = "user-row";
           row.innerHTML = `
-            <span class="avatar">${username[0].toUpperCase()}</span>
-            <div>
-              <div class="user-row-name">${username}</div>
+            <span class="avatar">${u.username[0].toUpperCase()}</span>
+            <div class="user-row-info">
+              <div class="user-row-name">${u.username}${icons ? ' ' + icons : ''}</div>
               ${isYou ? '<div class="user-row-you">You</div>' : ""}
             </div>`;
           list.appendChild(row);
@@ -163,7 +206,10 @@
         _pendingSetPasswordUser = null;
         try {
           const userSnap = await getDoc(doc(db, "users", u.uid));
-          currentUsername = userSnap.exists() ? (userSnap.data().username || u.email) : u.email;
+          const ud = userSnap.exists() ? userSnap.data() : {};
+          currentUsername  = ud.username || u.email;
+          userStats        = ud.stats || { listingsAdded:0, buyersAdded:0, hotMarkings:0, underbiddersLogged:0 };
+          userAchievements = ud.achievements || [];
         } catch { currentUsername = u.email; }
         hide("set-password-screen");
         show("app-screen"); hide("auth-screen"); hide("hero-screen");
@@ -348,6 +394,7 @@
           listings.unshift({id:ref.id,address,suburb,priceMin,priceMax,propertyType:propType,status,notes,beds,baths,cars,
             addedByUid:currentUser.uid,addedByName:currentUsername});
           toastMsg="Listing added!";
+          incrementUserStat('listingsAdded');
         }
         saved=true;
       } catch(err) { setErr("listing-err", `Error: ${err.code || err.message}`); console.error(err); }
@@ -443,6 +490,7 @@
       try {
         await updateDoc(doc(db,"buyers",id), { isHot: newHot });
         buyer.isHot = newHot;
+        if (newHot) incrementUserStat('hotMarkings');
         renderBuyers(); renderDashboard(); renderListings();
         toast(newHot ? "Marked as 🔥 Hot buyer!" : "Removed hot status.");
       } catch(err) { toast("Failed to update.",true); console.error(err); }
@@ -479,7 +527,9 @@
           buyer.underBidderHistory = [...(buyer.underBidderHistory||[]), entry];
           buyer.isHot = true;
         }
+        incrementUserStat('underbiddersLogged');
         hideModal("modal-underbidder");
+        pendingUnderBidderId = null;
         renderBuyers(); renderDashboard(); renderListings();
         toast("Under bidder recorded — buyer marked 🔥 Hot!");
       } catch(err) { setErr("ub-err","Failed to save. Please try again."); console.error(err); }
@@ -565,6 +615,7 @@
             propertyType:propType,phone,email,preApproved,boxdice,notes,isHot:false,underBidderHistory:[],
             addedByUid:currentUser.uid,addedByName:currentUsername});
           toastMsg="Buyer added!";
+          incrementUserStat('buyersAdded');
         }
         saved=true;
       } catch(err) { setErr("buyer-err","Failed to save. Please try again."); console.error(err); }
@@ -684,8 +735,10 @@
       if (e.target.id === "modal-add-listing")  { hideModal("modal-add-listing");  editingListingId = null; }
       if (e.target.id === "modal-add-buyer")    { hideModal("modal-add-buyer");    editingBuyerId = null; }
       if (e.target.id === "modal-underbidder")  { hideModal("modal-underbidder");  pendingUnderBidderId = null; }
-      if (e.target.id === "modal-matches")      { hideModal("modal-matches"); }
-      if (e.target.id === "modal-welcome")      { hideModal("modal-welcome"); }
+      if (e.target.id === "modal-matches")           { hideModal("modal-matches"); }
+      if (e.target.id === "modal-welcome")           { hideModal("modal-welcome"); }
+      if (e.target.id === "modal-achievements")      { hideModal("modal-achievements"); }
+      if (e.target.id === "modal-achievement-unlock"){ hideModal("modal-achievement-unlock"); if (achUnlockTimer) { clearTimeout(achUnlockTimer); achUnlockTimer = null; } }
     });
 
     // ── Suburb chip input ──────────────────────────────────────────────────
@@ -758,6 +811,108 @@
       });
     });
 
+
+    // ══════════════════════════════════════════════════════════════════════
+    // ACHIEVEMENTS
+    // ══════════════════════════════════════════════════════════════════════
+    const ACHIEVEMENTS = [
+      { id:'first_listing',     icon:'🏠', title:'First Drops',         desc:'Add your first off-market listing to the pool.' },
+      { id:'listing_5',         icon:'🔮', title:'Off-Market Oracle',   desc:'5 listings in. The team is leaning on you.' },
+      { id:'listing_10',        icon:'🏆', title:'Listing Legend',      desc:'10 listings. You are the pool.' },
+      { id:'first_buyer',       icon:'👤', title:'Buyer Whisperer',     desc:'Add your first buyer to the pool.' },
+      { id:'buyer_5',           icon:'👥', title:'Crowd Controller',    desc:'5 buyers in. You run the demand side.' },
+      { id:'first_hot',         icon:'🔥', title:'Heat Check',          desc:'Mark your first buyer as hot.' },
+      { id:'first_underbidder', icon:'🔴', title:'War Reporter',        desc:'Log your first underbidder.' },
+      { id:'underbidder_3',     icon:'💔', title:'Heartbreak Hotel',    desc:'3 underbidders recorded. Rough season — but they\'re still hunting.' },
+      { id:'double_dipper',     icon:'🌶️', title:'Double Dipper',       desc:'Add both a listing and a buyer to the pool.' },
+      { id:'all_star',          icon:'⭐', title:'All-Star',            desc:'Add a listing, buyer, mark hot, and log an underbidder.' },
+    ];
+
+    function achCondition(id, s) {
+      switch (id) {
+        case 'first_listing':     return s.listingsAdded >= 1;
+        case 'listing_5':         return s.listingsAdded >= 5;
+        case 'listing_10':        return s.listingsAdded >= 10;
+        case 'first_buyer':       return s.buyersAdded >= 1;
+        case 'buyer_5':           return s.buyersAdded >= 5;
+        case 'first_hot':         return s.hotMarkings >= 1;
+        case 'first_underbidder': return s.underbiddersLogged >= 1;
+        case 'underbidder_3':     return s.underbiddersLogged >= 3;
+        case 'double_dipper':     return s.listingsAdded >= 1 && s.buyersAdded >= 1;
+        case 'all_star':          return s.listingsAdded >= 1 && s.buyersAdded >= 1 && s.hotMarkings >= 1 && s.underbiddersLogged >= 1;
+        default: return false;
+      }
+    }
+
+    async function incrementUserStat(field) {
+      if (!currentUser) return;
+      userStats[field] = (userStats[field] || 0) + 1;
+      const newlyUnlocked = ACHIEVEMENTS
+        .filter(a => !userAchievements.includes(a.id) && achCondition(a.id, userStats))
+        .map(a => a.id);
+      userAchievements = [...userAchievements, ...newlyUnlocked];
+      try {
+        const upd = { [`stats.${field}`]: increment(1) };
+        if (newlyUnlocked.length) upd.achievements = arrayUnion(...newlyUnlocked);
+        await setDoc(doc(db, "users", currentUser.uid), upd, { merge: true });
+        loadUsers();
+      } catch(e) { console.warn("Could not save stat", e); }
+      for (const id of newlyUnlocked) {
+        const ach = ACHIEVEMENTS.find(a => a.id === id);
+        if (ach) showAchievementUnlock(ach);
+      }
+    }
+
+    let achUnlockTimer = null;
+    let achQueue = [];
+    let achShowing = false;
+
+    function showAchievementUnlock(ach) {
+      achQueue.push(ach);
+      if (!achShowing) drainAchQueue();
+    }
+
+    function drainAchQueue() {
+      if (!achQueue.length) { achShowing = false; return; }
+      achShowing = true;
+      const ach = achQueue.shift();
+      el("ach-unlock-icon").textContent  = ach.icon;
+      el("ach-unlock-title").textContent = ach.title;
+      el("ach-unlock-desc").textContent  = ach.desc;
+      showModal("modal-achievement-unlock");
+      if (achUnlockTimer) clearTimeout(achUnlockTimer);
+      achUnlockTimer = setTimeout(() => {
+        hideModal("modal-achievement-unlock");
+        achUnlockTimer = null;
+        setTimeout(drainAchQueue, 400);
+      }, 6000);
+    }
+
+    window.closeAchievementUnlock = () => {
+      hideModal("modal-achievement-unlock");
+      if (achUnlockTimer) { clearTimeout(achUnlockTimer); achUnlockTimer = null; }
+      setTimeout(drainAchQueue, 400);
+    };
+
+    window.openAchievements = () => {
+      const body = el("achievements-body");
+      const unlockCount = userAchievements.length;
+      el("ach-progress").textContent = `${unlockCount} / ${ACHIEVEMENTS.length} unlocked`;
+      body.innerHTML = ACHIEVEMENTS.map(a => {
+        const unlocked = userAchievements.includes(a.id);
+        return `<div class="ach-row ${unlocked ? 'ach-unlocked' : 'ach-locked'}">
+          <div class="ach-icon-cell">${unlocked ? a.icon : '🔒'}</div>
+          <div class="ach-info">
+            <div class="ach-name">${unlocked ? a.title : '???'}</div>
+            <div class="ach-desc">${unlocked ? a.desc : 'Keep contributing to unlock'}</div>
+          </div>
+          ${unlocked ? '<div class="ach-check">✓</div>' : ''}
+        </div>`;
+      }).join("");
+      showModal("modal-achievements");
+    };
+
+    window.closeAchievements = () => hideModal("modal-achievements");
 
     function toast(msg, isError=false) {
       const t=el("toast");
@@ -1017,7 +1172,6 @@
     }
 
     /* ── Dashboard layout ──────────────────────────────────────────────────── */
-    .dash-columns { display:grid; grid-template-columns:1fr 1fr; gap:1.5rem; align-items:start; }
     .dash-section-title {
       font-size:9px; font-weight:700; letter-spacing:0.22em; text-transform:uppercase;
       color:var(--accent); margin-bottom:.85rem;
@@ -1334,6 +1488,9 @@
       .users-sidebar { position:static; }
     }
 
+    /* Hide bottom nav on desktop — must be before the mobile media query */
+    #bottom-nav { display:none; }
+
     @media (max-width:600px) {
       /* ── Navbar: hide tabs, show burger ── */
       .navbar { height:54px; padding:0 1rem; }
@@ -1396,9 +1553,6 @@
       .btn-cancel,.btn-primary { width:100%; }
     }
 
-    /* Hide bottom nav on desktop */
-    #bottom-nav { display:none; }
-
     /* ── Hero landing section ──────────────────────────────────────────────── */
     html { scroll-behavior:smooth; }
     #hero-screen {
@@ -1456,6 +1610,68 @@
       .hero-features { flex-direction:column; align-items:center; }
       .hero-feat { max-width:100%; }
     }
+
+    /* ── Achievement unlock modal ──────────────────────────────────────────── */
+    .ach-unlock-box {
+      border-color: var(--accent) !important;
+      box-shadow: 0 24px 64px rgba(0,0,0,.3), 0 0 0 1px var(--accent-bdr), 0 0 40px rgba(212,168,83,0.18) !important;
+      position: relative; overflow: hidden;
+    }
+    .ach-unlock-rays {
+      position: absolute; inset: 0; pointer-events: none;
+      background: radial-gradient(ellipse at 50% 30%, rgba(212,168,83,0.13) 0%, transparent 65%);
+    }
+    .ach-unlock-icon {
+      font-size: 4rem; line-height: 1; margin-bottom: .75rem;
+      animation: ach-pop .45s cubic-bezier(0.175,0.885,0.32,1.275) both;
+    }
+    @keyframes ach-pop {
+      0%   { transform: scale(0.4); opacity: 0; }
+      100% { transform: scale(1);   opacity: 1; }
+    }
+    .ach-unlock-eyebrow {
+      font-size: 9px; font-weight: 700; letter-spacing: 0.28em;
+      text-transform: uppercase; color: var(--accent); margin-bottom: .4rem;
+    }
+    .ach-unlock-title {
+      font-size: 1.2rem; font-weight: 900; color: var(--brand);
+      text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: .6rem;
+    }
+    .ach-unlock-desc {
+      font-size: .85rem; color: var(--muted); line-height: 1.7; margin-bottom: 1.5rem;
+    }
+
+    /* ── Achievements gallery ──────────────────────────────────────────────── */
+    .ach-progress-line {
+      font-size: .78rem; color: var(--accent); font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.12em;
+      margin-bottom: 1rem;
+    }
+    .ach-gallery { display: flex; flex-direction: column; gap: .6rem; }
+    .ach-row {
+      display: flex; align-items: center; gap: .85rem;
+      padding: .85rem 1rem; border-radius: 8px;
+      border: 1px solid var(--border); transition: background .15s;
+    }
+    .ach-unlocked {
+      background: var(--accent-dim); border-color: var(--accent-bdr);
+    }
+    .ach-locked {
+      background: var(--bg-dark); opacity: .55;
+    }
+    .ach-icon-cell { font-size: 1.8rem; line-height: 1; flex-shrink: 0; width: 2.2rem; text-align: center; }
+    .ach-info { flex: 1; }
+    .ach-name { font-size: .88rem; font-weight: 700; color: var(--brand); }
+    .ach-desc { font-size: .75rem; color: var(--muted); margin-top: .15rem; line-height: 1.5; }
+    .ach-check {
+      font-size: .8rem; font-weight: 700; color: var(--success);
+      background: rgba(47,185,138,0.12); border: 1px solid rgba(47,185,138,0.3);
+      border-radius: 999px; padding: .15rem .55rem; flex-shrink: 0;
+    }
+
+    /* ── Sidebar user row with icons ───────────────────────────────────────── */
+    .user-row-info { display: flex; flex-direction: column; }
+    .arthur-emoji { font-size: 1rem; }
   </style>
 </head>
 <body>
@@ -1551,6 +1767,7 @@
       <button id="tab-dashboard" class="nav-tab tab-active" onclick="switchTab('dashboard')">📊 Dashboard</button>
       <button id="tab-listings"  class="nav-tab"            onclick="switchTab('listings')">🏠 Listings</button>
       <button id="tab-buyers"    class="nav-tab"            onclick="switchTab('buyers')">🙋🏻‍♂️ Buyers</button>
+      <button class="nav-tab" onclick="openAchievements()">🏅 Achievements</button>
       <span class="navbar-user" id="user-name"></span>
       <button class="btn-logout" onclick="handleLogout()">Log out</button>
       <button class="burger-btn" id="burger-btn" onclick="toggleBurger()" aria-label="Menu">&#9776;</button>
@@ -1567,6 +1784,7 @@
     <button class="burger-item" onclick="switchTab('dashboard');toggleBurger()">📊 Dashboard</button>
     <button class="burger-item" onclick="switchTab('listings');toggleBurger()">🏠 Listings</button>
     <button class="burger-item" onclick="switchTab('buyers');toggleBurger()">🙋🏻‍♂️ Buyers</button>
+    <button class="burger-item" onclick="openAchievements();toggleBurger()">🏅 Achievements</button>
     <div class="burger-divider"></div>
     <button class="burger-item burger-logout" onclick="handleLogout()">Log out</button>
   </div>
@@ -1641,6 +1859,9 @@
     </button>
     <button class="bottom-tab" id="btab-buyers" onclick="switchTab('buyers')">
       <span class="tab-icon">🙋🏻‍♂️</span>Buyers
+    </button>
+    <button class="bottom-tab" onclick="openAchievements()">
+      <span class="tab-icon">🏅</span>Honours
     </button>
   </nav>
 
@@ -1770,6 +1991,30 @@
     <h2 id="welcome-heading" style="font-size:1.1rem;font-weight:900;color:var(--brand);margin-bottom:.75rem"></h2>
     <p id="welcome-msg" style="font-size:.88rem;color:var(--muted);line-height:1.75;margin-bottom:1.5rem"></p>
     <button id="welcome-cta" class="btn-primary" onclick="closeWelcome()" style="max-width:200px;margin:0 auto"></button>
+  </div>
+</div>
+
+<!-- ══════════════════════ ACHIEVEMENT UNLOCK MODAL ══════════════════════════ -->
+<div id="modal-achievement-unlock" class="modal-backdrop hidden">
+  <div class="modal-box modal-box-sm ach-unlock-box" style="text-align:center">
+    <div class="ach-unlock-rays"></div>
+    <div id="ach-unlock-icon" class="ach-unlock-icon"></div>
+    <div class="ach-unlock-eyebrow">Achievement Unlocked</div>
+    <h2 id="ach-unlock-title" class="ach-unlock-title"></h2>
+    <p id="ach-unlock-desc" class="ach-unlock-desc"></p>
+    <button class="btn-primary" onclick="closeAchievementUnlock()" style="max-width:180px;margin:0 auto">Let's go 💪</button>
+  </div>
+</div>
+
+<!-- ══════════════════════ ACHIEVEMENTS GALLERY MODAL ════════════════════════ -->
+<div id="modal-achievements" class="modal-backdrop hidden">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h2>🏅 Achievements</h2>
+      <button class="btn-close" onclick="closeAchievements()">✕</button>
+    </div>
+    <div id="ach-progress" class="ach-progress-line"></div>
+    <div id="achievements-body" class="ach-gallery"></div>
   </div>
 </div>
 
