@@ -171,8 +171,11 @@
       ["dashboard","listings","buyers"].forEach(t => {
         el("tab-"+t).classList.toggle("tab-active", t === tab);
         el("pane-"+t).classList.toggle("hidden",    t !== tab);
+        const bt = el("btab-"+t);
+        if (bt) bt.classList.toggle("tab-active", t === tab);
       });
       if (tab === "dashboard") renderDashboard();
+      window.scrollTo(0, 0);
     };
 
     // ── Load ───────────────────────────────────────────────────────────────
@@ -1164,15 +1167,69 @@
       .dash-columns { grid-template-columns:1fr; }
       .stats-bar { grid-template-columns:1fr 1fr; }
     }
+
     @media (max-width:600px) {
+      /* ── Navbar: hide tabs, show only brand + logout ── */
+      .navbar { height:54px; padding:0 1rem; }
       .navbar-user { display:none; }
-      .form-row-2 { grid-template-columns:1fr; }
+      .nav-tab { display:none; }
+
+      /* ── Bottom tab bar ── */
+      #bottom-nav {
+        display:flex;
+        position:fixed; bottom:0; left:0; right:0;
+        background:var(--brand); z-index:100;
+        border-top:1px solid rgba(255,255,255,0.08);
+        height:60px;
+        padding-bottom:env(safe-area-inset-bottom);
+      }
+      .bottom-tab {
+        flex:1; display:flex; flex-direction:column; align-items:center;
+        justify-content:center; gap:3px;
+        background:none; border:none; cursor:pointer;
+        color:rgba(242,237,228,0.45); font-family:'Inter',sans-serif;
+        font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:0.1em;
+        padding:.5rem 0; transition:color .15s;
+      }
+      .bottom-tab .tab-icon { font-size:1.3rem; line-height:1; }
+      .bottom-tab.tab-active { color:var(--accent); }
+
+      /* ── Push content above bottom nav ── */
+      #app-screen { padding-bottom:60px; }
+
+      /* ── Layout ── */
+      .form-row-2,.form-row-3 { grid-template-columns:1fr; }
       .grid { grid-template-columns:1fr; }
-      .pane { padding:1rem .75rem; }
-      .modal-box { padding:1.25rem; }
+      .pane { padding:.85rem .75rem; }
       .stats-bar { grid-template-columns:1fr 1fr; gap:.5rem; }
       .stat-num { font-size:1.6rem; }
+      .stat-card { padding:.85rem .75rem; }
+
+      /* ── Modals ── */
+      .modal-backdrop { align-items:flex-end; padding:0; }
+      .modal-box {
+        padding:1.25rem 1rem;
+        border-radius:16px 16px 0 0;
+        max-height:92vh;
+        width:100%;
+        max-width:100%;
+      }
+
+      /* ── Toolbar ── */
+      .toolbar { gap:.5rem; }
+      .toolbar-search { font-size:.85rem; }
+      .btn-add { font-size:.72rem; padding:.55rem .85rem; }
+
+      /* ── Cards ── */
+      .card { padding:1rem; }
+      .card-footer { flex-direction:column; align-items:flex-start; }
+      .card-footer > div { width:100%; justify-content:flex-end; }
+      .modal-actions { flex-direction:column; }
+      .btn-cancel,.btn-primary { width:100%; }
     }
+
+    /* Hide bottom nav on desktop */
+    #bottom-nav { display:none; }
 
     /* ── Hero landing section ──────────────────────────────────────────────── */
     html { scroll-behavior:smooth; }
@@ -1380,6 +1437,19 @@
       <div class="icon">🏡</div><p>No listings yet — add the first one!</p>
     </div>
   </div>
+
+  <!-- ── BOTTOM NAV (mobile only) ─────────────────────────────────────── -->
+  <nav id="bottom-nav">
+    <button class="bottom-tab tab-active" id="btab-dashboard" onclick="switchTab('dashboard')">
+      <span class="tab-icon">📊</span>Dashboard
+    </button>
+    <button class="bottom-tab" id="btab-listings" onclick="switchTab('listings')">
+      <span class="tab-icon">🏠</span>Listings
+    </button>
+    <button class="bottom-tab" id="btab-buyers" onclick="switchTab('buyers')">
+      <span class="tab-icon">🙋🏻‍♂️</span>Buyers
+    </button>
+  </nav>
 
   <!-- ── BUYERS PANE ────────────────────────────────────────────────────── -->
   <div id="pane-buyers" class="pane hidden">
