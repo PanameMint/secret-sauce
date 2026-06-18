@@ -127,17 +127,36 @@
       try {
         const snap = await getDocs(collection(db, "users"));
         const users = snap.docs.map(d => ({
-          uid:          d.id,
-          username:     d.data().username || d.id,
-          achievements: d.data().achievements || [],
-          buyersAdded:  (d.data().stats || {}).buyersAdded || 0,
+          uid:           d.id,
+          username:      d.data().username || d.id,
+          achievements:  d.data().achievements || [],
+          buyersAdded:   (d.data().stats || {}).buyersAdded   || 0,
+          listingsAdded: (d.data().stats || {}).listingsAdded || 0,
         }));
 
-        const byAch  = [...users].sort((a,b) => b.achievements.length - a.achievements.length);
-        const grailU = byAch[0]?.achievements.length > 0 ? byAch[0] : null;
-        const excalU = byAch[1]?.achievements.length > 0 ? byAch[1] : null;
-        const crownU = [...users].sort((a,b) => b.buyersAdded - a.buyersAdded)
-                         .filter(u => u.buyersAdded > 0)[0] || null;
+        const byAch     = [...users].sort((a,b) => b.achievements.length - a.achievements.length);
+        const anyHasAch = byAch[0]?.achievements.length > 0;
+        let grailU, excalU;
+        if (anyHasAch) {
+          grailU = byAch[0];
+          excalU = byAch[1]?.achievements.length > 0 ? byAch[1] : null;
+        } else {
+          const byListings = [...users].sort((a,b) => b.listingsAdded - a.listingsAdded);
+          grailU = byListings[0]?.listingsAdded > 0 ? byListings[0] : null;
+          excalU = byListings[1]?.listingsAdded > 0 ? byListings[1] : null;
+        }
+        const crownU   = [...users].sort((a,b) => b.buyersAdded - a.buyersAdded)
+                           .filter(u => u.buyersAdded > 0)[0] || null;
+
+        // Diamond — agent with the most expensive listing in the pool
+        const myListings = listings.filter(l => l.addedByUid);
+        const agentMaxPrice = {};
+        myListings.forEach(l => {
+          const price = parseInt((l.priceMax || l.priceMin || "").replace(/[^0-9]/g,"")) || 0;
+          if (price > (agentMaxPrice[l.addedByUid] || 0)) agentMaxPrice[l.addedByUid] = price;
+        });
+        const diamondUid = Object.entries(agentMaxPrice).sort((a,b) => b[1]-a[1])[0]?.[0] || null;
+        const diamondU   = diamondUid ? users.find(u => u.uid === diamondUid) || null : null;
 
         const artEmoji = getArthurEmoji(grailU?.username, excalU?.username);
 
@@ -147,10 +166,11 @@
           const isYou    = u.uid === currentUser?.uid;
           const isArthur = u.username.toLowerCase().includes('arthur');
           const icons = [
-            grailU?.uid === u.uid ? '<span title="Top Achiever — Holy Grail">🏆</span>' : '',
-            excalU?.uid === u.uid ? '<span title="Runner-up — Excalibur">⚔️</span>'     : '',
-            crownU?.uid === u.uid ? '<span title="Most Buyers Referred">👑</span>'       : '',
-            isArthur              ? `<span class="arthur-emoji">${artEmoji}</span>`       : '',
+            grailU?.uid   === u.uid ? '<span title="Top Achiever — Holy Grail">🏆</span>'     : '',
+            excalU?.uid   === u.uid ? '<span title="Runner-up — Excalibur">⚔️</span>'         : '',
+            crownU?.uid   === u.uid ? '<span title="Most Buyers Referred">👑</span>'           : '',
+            diamondU?.uid === u.uid ? '<span title="Most Expensive Listing">💎</span>'         : '',
+            isArthur                ? `<span class="arthur-emoji">${artEmoji}</span>`           : '',
           ].join('');
           const row = document.createElement("div");
           row.className = "user-row";
