@@ -710,6 +710,14 @@
       renderSuburbChips();
     };
 
+    window.addSuburbChip = (name) => {
+      const v = name.trim();
+      if (v && !suburbChips.some(s => s.toLowerCase() === v.toLowerCase())) {
+        suburbChips.push(v);
+        renderSuburbChips();
+      }
+    };
+
     function formatPriceInput(e) {
       const input = e.target;
       const raw = input.value.replace(/[^0-9]/g, "");
@@ -786,6 +794,33 @@
           } catch(e) { console.warn("Place parse error:", e); }
         });
       } catch(e) { console.warn("Maps autocomplete init failed:", e); }
+
+      // Suburb autocomplete for buyer form
+      try {
+        const si = document.getElementById("b-suburb-input");
+        if (si && window.google?.maps?.places) {
+          const suburbAc = new google.maps.places.Autocomplete(si, {
+            componentRestrictions: { country: ["au"] },
+            fields: ["address_components"],
+            types: ["(cities)"],
+          });
+          suburbAc.addListener("place_changed", () => {
+            try {
+              const place = suburbAc.getPlace();
+              if (!place.address_components) return;
+              let name = "";
+              for (const c of place.address_components) {
+                if (c.types.includes("locality") || c.types.includes("sublocality")) {
+                  name = c.long_name; break;
+                }
+              }
+              if (!name) name = si.value.trim();
+              si.value = "";
+              if (window.addSuburbChip) window.addSuburbChip(name);
+            } catch(e) { console.warn("Suburb place parse:", e); }
+          });
+        }
+      } catch(e) { console.warn("Suburb autocomplete init failed:", e); }
     };
   </script>
   <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDbddkDT76iAf2ShHrWbNdhmmwf-4OMeb8&libraries=places&v=weekly&callback=mapsReady" async defer></script>
@@ -863,6 +898,10 @@
     .form-group input:focus,.form-group select:focus,.form-group textarea:focus {
       border-color:var(--accent);
     }
+    .form-group input::placeholder,
+    .form-group textarea::placeholder,
+    .suburb-chip-input::placeholder { color:rgba(107,128,112,0.45); }
+    .toolbar-search::placeholder { color:rgba(107,128,112,0.45); }
     .btn-primary {
       width:100%; padding:.75rem; background:var(--brand); color:var(--bg);
       border:none; border-radius:7px; font-size:.85rem; font-weight:700;
@@ -1606,19 +1645,19 @@
     </div>
     <form id="add-listing-form" onsubmit="submitListing(event)">
       <div class="form-group"><label>Street address *</label><input id="l-address" type="text" placeholder="Start typing an address…" required autocomplete="off" /></div>
-      <div class="form-group"><label>Suburb *</label><input id="l-suburb" type="text" placeholder="Melbourne" required /></div>
+      <div class="form-group"><label>Suburb *</label><input id="l-suburb" type="text" placeholder="" required /></div>
       <div class="form-row-2">
-        <div class="form-group"><label>Price from</label><input id="l-price-min" type="text" placeholder="$1,100,000" /></div>
-        <div class="form-group"><label>Price to</label><input id="l-price-max" type="text" placeholder="$1,300,000" /></div>
+        <div class="form-group"><label>Price from</label><input id="l-price-min" type="text" placeholder="$" /></div>
+        <div class="form-group"><label>Price to</label><input id="l-price-max" type="text" placeholder="$" /></div>
       </div>
       <div class="form-row-2">
         <div class="form-group"><label>Property type</label><select id="l-type"><option>House</option><option>Apartment</option><option>Townhouse</option><option>Land</option><option>Other</option></select></div>
-        <div class="form-group"><label>Status</label><select id="l-status"><option>Off Market</option><option>Pre-Market</option><option>Available</option><option>Withdrawn</option></select></div>
+        <div class="form-group"><label>Status</label><select id="l-status"><option>Off Market</option><option>Pre-Market</option><option>Withdrawn</option></select></div>
       </div>
       <div class="form-row-3">
-        <div class="form-group"><label>Beds</label><input id="l-beds" type="number" min="0" max="20" placeholder="3" /></div>
-        <div class="form-group"><label>Baths</label><input id="l-baths" type="number" min="0" max="20" placeholder="2" /></div>
-        <div class="form-group"><label>Car parks</label><input id="l-cars" type="number" min="0" max="10" placeholder="1" /></div>
+        <div class="form-group"><label>Beds</label><input id="l-beds" type="number" min="0" max="20" placeholder="0" /></div>
+        <div class="form-group"><label>Baths</label><input id="l-baths" type="number" min="0" max="20" placeholder="0" /></div>
+        <div class="form-group"><label>Car parks</label><input id="l-cars" type="number" min="0" max="10" placeholder="0" /></div>
       </div>
       <div class="form-group"><label>Notes</label><textarea id="l-notes" rows="3" placeholder="Vendor motivation, features, inspection access…"></textarea></div>
       <p id="listing-err" class="form-err"></p>
@@ -1638,21 +1677,21 @@
       <button class="btn-close" onclick="closeAddBuyer()">✕</button>
     </div>
     <form id="add-buyer-form" onsubmit="submitBuyer(event)">
-      <div class="form-group"><label>Full name *</label><input id="b-name" type="text" placeholder="John & Jane Smith" required /></div>
+      <div class="form-group"><label>Full name *</label><input id="b-name" type="text" placeholder="" required /></div>
       <div class="form-row-2">
-        <div class="form-group"><label>Min budget</label><input id="b-budget-min" type="text" placeholder="$800,000" /></div>
-        <div class="form-group"><label>Max budget</label><input id="b-budget-max" type="text" placeholder="$1,200,000" /></div>
+        <div class="form-group"><label>Min budget</label><input id="b-budget-min" type="text" placeholder="$" /></div>
+        <div class="form-group"><label>Max budget</label><input id="b-budget-max" type="text" placeholder="$" /></div>
       </div>
       <div class="form-group">
         <label>Suburbs of interest</label>
         <div class="suburb-chip-wrap" id="suburb-chip-wrap" onclick="document.getElementById('b-suburb-input').focus()">
-          <input id="b-suburb-input" class="suburb-chip-input" type="text" placeholder="Type suburb, press Enter…" autocomplete="off" />
+          <input id="b-suburb-input" class="suburb-chip-input" type="text" placeholder="Type suburb…" autocomplete="off" />
         </div>
         <input type="hidden" id="b-suburbs" />
       </div>
       <div class="form-row-2">
-        <div class="form-group"><label>Phone</label><input id="b-phone" type="tel" placeholder="0400 000 000" /></div>
-        <div class="form-group"><label>Email</label><input id="b-email" type="email" placeholder="buyer@email.com" /></div>
+        <div class="form-group"><label>Phone</label><input id="b-phone" type="tel" placeholder="" /></div>
+        <div class="form-group"><label>Email</label><input id="b-email" type="email" placeholder="" /></div>
       </div>
       <div class="form-row-2">
         <div class="form-group"><label>Property type</label><select id="b-type"><option>Any</option><option>House</option><option>Apartment</option><option>Townhouse</option><option>Land</option></select></div>
